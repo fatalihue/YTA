@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, execFile } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
+const bridge = require('./bridge.cjs');
 
 // Em pacote, o binário do ffmpeg-static fica fora do asar.
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
@@ -824,6 +825,8 @@ function createWindow() {
     minWidth: 560,
     minHeight: 652,
     title: 'YTA',
+    icon: path.join(__dirname, 'tray.png'),
+    show: false, // aparece em ready-to-show; aberto pela extensão, fica só na bandeja
     backgroundColor: '#121316',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -831,6 +834,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+  const hidden = bridge.startsHidden();
+  win.once('ready-to-show', () => {
+    if (!hidden) win.show();
+  });
+  bridge.hideOnClose(win);
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.webContents.once('did-finish-load', () => {
     prepareTool();
@@ -840,6 +848,11 @@ function createWindow() {
 
 Menu.setApplicationMenu(null);
 
+let rendererReady = false;
+ipcMain.on('renderer-ready', () => {
+  rendererReady = true;
+  bridge.flushRendererQueue();
+});
 ipcMain.handle('tool-status', () => toolStatus);
 ipcMain.handle('default-folder', () => app.getPath('music'));
 ipcMain.handle('pick-folder', async (_e, start) => {
@@ -872,11 +885,15 @@ ipcMain.handle('cancel-job', (_e, id) => cancelJob(id));
 ipcMain.handle('reveal', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('retry-tool', () => prepareTool().then(() => true, () => false));
 
+if (!bridge.claimSingleInstance()) app.exit(0); // já há um YTA aberto: o pedido foi entregue a ele
+app.setAppUserModelId('local.yta'); // notificações do Windows com o nome e o ícone do app
+
 app.whenReady().then(() => {
   fs.rm(workRoot, { recursive: true, force: true }, () => {}); // sobras de uma sessão interrompida
   // Login por janela embutida da versão anterior (o Google bloqueava); não é mais usado.
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
+  bridge.init({ getWin: () => win, probe, rendererReady: () => rendererReady });
 });
 app.on('window-all-closed', () => {
   for (const id of jobs.keys()) cancelJob(id);

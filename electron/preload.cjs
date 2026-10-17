@@ -25,4 +25,10 @@ contextBridge.exposeInMainWorld('yta', {
   updateState: () => ipcRenderer.invoke('update-state'),
   installUpdate: () => ipcRenderer.invoke('update-install'),
   onUpdateState: (cb) => subscribe('update-state', cb),
+  // Ponte com a extensão do navegador (ver electron/bridge.cjs).
+  onExternalAdd: (cb) => subscribe('external-add', cb),
+  externalAdded: (reply) => ipcRenderer.send('external-added', reply),
+  reportItems: (list) => ipcRenderer.send('items-state', list),
+  rendererReady: () => ipcRenderer.send('renderer-ready'),
+  extensionHelp: () => ipcRenderer.invoke('extension-help'),
 });

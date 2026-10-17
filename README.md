@@ -22,12 +22,43 @@ espera — não interrompe a fila.
 O feed é o `latest.yml` da release mais recente, lido pelo endereço fixo
 `releases/latest/download/` (sem a API do GitHub, como no TrueReplayer).
 
+## Extensão do navegador
+
+Um botão **"Baixar"** aparece no canto dos vídeos do YouTube (página, Shorts, prévias) e do
+Instagram (feed, reels, posts), como o do IDM:
+
+- **clique no corpo**: baixa com a última escolha (ex.: "Áudio M4A");
+- **setinha**: menu com áudio (M4A, Opus, MP3), vídeo (melhor ou as resoluções reais daquele vídeo)
+  e "Compatível com WhatsApp (H.264)";
+- o próprio botão mostra o andamento: na fila → baixando % → **Salvo · Abrir pasta**;
+- o **×** esconde o botão naquele vídeo; clique direito em um link: "Baixar com o YTA".
+
+O download acontece no YTA (mesma fila, pasta e formatos); a extensão só envia o pedido. Com o YTA
+fechado, ela o abre pelo `yta://` (o Chrome pergunta "Abrir o YTA?" na primeira vez — marque
+"sempre permitir") e o app fica só na bandeja.
+
+**Instalar (modo desenvolvedor):** no YTA, botão de peça de quebra-cabeça no cabeçalho da fila (ou
+ícone da bandeja → "Conectar extensão do navegador…"). Ele copia o caminho da pasta da extensão
+(`%APPDATA%\yta\extension`); em `chrome://extensions` (ou `edge://extensions`) ative o
+"Modo do desenvolvedor" → "Carregar sem compactação" → cole o caminho. A pasta é atualizada pelo
+próprio YTA a cada versão e a extensão se recarrega sozinha.
+
+**Segurança:** o YTA escuta só em `127.0.0.1` e só aceita pedidos da extensão (cabeçalho próprio,
+que páginas comuns não conseguem enviar, e origem `chrome-extension://` com o ID fixo dela).
+
+## Bandeja
+
+Fechar a janela deixa o YTA rodando ao lado do relógio (para a extensão sempre achá-lo); "Sair" no
+ícone da bandeja encerra de verdade. Pedidos da extensão entram na fila sem abrir a janela e
+avisam por notificação do Windows ("Salvo: …" — clique para abrir a pasta).
+
 ## Desenvolver e publicar
 
 ```
 npm install
 npm start                      # compila e abre o app
 npm run dist                   # gera release/YTA-Setup-x.y.z.exe + latest.yml (sem publicar)
+npm run icons                  # regera os ícones (app, bandeja, extensão)
 
 npm version patch              # sobe a versão (commit + tag)
 npm run release -- "- Novidade 1" "- Novidade 2"

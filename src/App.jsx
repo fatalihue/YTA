@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Download, FolderOpen, Loader2 } from 'lucide-react';
-import { Button, Field, SegmentedControl } from './ui.jsx';
+import { AlertCircle, Download, FolderOpen, Loader2, Puzzle } from 'lucide-react';
+import { Button, Field, IconButton, SegmentedControl } from './ui.jsx';
 import { QueueItem } from './QueueItem.jsx';
 
 const api = window.yta;
@@ -74,6 +74,11 @@ export default function App() {
   const [loginState, setLoginState] = useState({ state: 'idle', browser: null, error: '', sites: {} });
   const [items, setItems] = useState([]);
   const running = useRef(new Set()); // ids em andamento
+  // Valores atuais para os pedidos da extensão (o assinante é criado uma vez só).
+  const settingsRef = useRef({});
+  const itemsRef = useRef([]);
+  settingsRef.current = { folder, format, bitrate, maxHeight, compat };
+  itemsRef.current = items;
 
   const patch = (id, change) =>
     setItems((list) => list.map((it) => (it.id === id ? { ...it, ...(typeof change === 'function' ? change(it) : change) } : it)));
@@ -101,6 +106,35 @@ export default function App() {
         );
       }
     });
+    // Pedido da extensão (botão no vídeo ou yta://): entra na mesma fila, com a pasta atual.
+    const offExternal = api.onExternalAdd((req) => {
+      const s = settingsRef.current;
+      const url = String(req.url || '').trim();
+      if (!SUPPORTED(url)) {
+        api.externalAdded({ reqId: req.reqId, ok: false, error: 'O YTA ainda não baixa deste site.' });
+        return;
+      }
+      const fmt = ['m4a', 'opus', 'mp3', 'video'].includes(req.format) ? req.format : s.format;
+      const key = `${fmt}:${videoKey(url)}`;
+      const same = itemsRef.current.find(
+        (it) => (it.phase === 'queued' || ACTIVE.includes(it.phase)) && `${it.format}:${videoKey(it.url)}` === key,
+      );
+      if (same) {
+        api.externalAdded({ reqId: req.reqId, ok: true, id: same.id, existing: true });
+        return;
+      }
+      const item = {
+        id: nextId++, url, folder: s.folder, format: fmt,
+        bitrate: Number(req.bitrate) || s.bitrate,
+        maxHeight: fmt === 'video' ? (req.maxHeight === undefined ? s.maxHeight : req.maxHeight) : null,
+        compat: fmt === 'video' && (req.compat === undefined ? s.compat : Boolean(req.compat)),
+        phase: 'queued', title: null, progress: {},
+      };
+      itemsRef.current = [...itemsRef.current, item];
+      setItems((list) => [...list, item]);
+      api.externalAdded({ reqId: req.reqId, ok: true, id: item.id });
+    });
+    api.rendererReady();
     // Pasta salva que sumiu volta para a pasta Música.
     (async () => {
       const saved = load('folder', '');
@@ -109,10 +143,22 @@ export default function App() {
     return () => {
       offTool();
       offJob();
+      offExternal();
       offUpdate();
       offLogin();
     };
   }, []);
+
+  // Estado resumido de cada item para o processo principal: é de onde a extensão lê o andamento.
+  useEffect(() => {
+    api.reportItems(
+      items.map((it) => ({
+        id: it.id, url: it.url, title: it.title, format: it.format, phase: it.phase,
+        part: it.progress?.part || null, percent: it.progress?.percent ?? null,
+        copy: it.progress?.copy ?? null, file: it.file || null, error: it.error || null,
+      })),
+    );
+  }, [items]);
 
   useEffect(() => save('folder', folder), [folder]);
   useEffect(() => save('format', format), [format]);
@@ -348,6 +394,9 @@ export default function App() {
           )}
           <span className="flex-1" />
           <UpdateNotice update={update} busy={items.some((it) => ACTIVE.includes(it.phase))} />
+          <IconButton label="Extensão do navegador" onClick={() => api.extensionHelp()}>
+            <Puzzle size={16} aria-hidden />
+          </IconButton>
           <Button variant="ghost" className="h-7 shrink-0" disabled={!finished} onClick={clearFinished}>
             Limpar concluídos
           </Button>
