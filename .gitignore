@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+release-build/
+*.log
+
+# Skills de design de terceiros (instaladas localmente); só a diretriz do projeto vai para o repo.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/diretriz-visual/

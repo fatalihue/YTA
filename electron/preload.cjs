@@ -1,0 +1,28 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+function subscribe(channel, cb) {
+  const handler = (_e, payload) => cb(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
+contextBridge.exposeInMainWorld('yta', {
+  defaultFolder: () => ipcRenderer.invoke('default-folder'),
+  pickFolder: (start) => ipcRenderer.invoke('pick-folder', start),
+  folderExists: (p) => ipcRenderer.invoke('folder-exists', p),
+  run: (job) => ipcRenderer.invoke('run-job', job),
+  probe: (url) => ipcRenderer.invoke('probe', url),
+  loginStatus: () => ipcRenderer.invoke('login-status'),
+  login: () => ipcRenderer.invoke('login'),
+  logout: () => ipcRenderer.invoke('logout'),
+  cancel: (id) => ipcRenderer.invoke('cancel-job', id),
+  reveal: (file) => ipcRenderer.invoke('reveal', file),
+  retryTool: () => ipcRenderer.invoke('retry-tool'),
+  toolStatus: () => ipcRenderer.invoke('tool-status'),
+  onToolStatus: (cb) => subscribe('tool-status', cb),
+  onJobEvent: (cb) => subscribe('job-event', cb),
+  onLoginState: (cb) => subscribe('login-state', cb),
+  updateState: () => ipcRenderer.invoke('update-state'),
+  installUpdate: () => ipcRenderer.invoke('update-install'),
+  onUpdateState: (cb) => subscribe('update-state', cb),
+});

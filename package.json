@@ -1,0 +1,75 @@
+{
+  "name": "yta",
+  "productName": "YTA",
+  "version": "1.0.0",
+  "description": "Baixa áudio (M4A, Opus, MP3) ou vídeo (MP4) do YouTube.",
+  "main": "electron/main.cjs",
+  "private": true,
+  "scripts": {
+    "lint:colors": "node scripts/check-colors.mjs",
+    "build": "npm run lint:colors && vite build",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win nsis --publish never",
+    "release": "node scripts/release.mjs"
+  },
+  "build": {
+    "appId": "local.yta",
+    "productName": "YTA",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YTA",
+      "runAfterFinish": true,
+      "installerLanguages": [
+        "pt_BR"
+      ],
+      "language": "1046",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "YTA-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/fatalihue/YTA/releases/latest/download"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "ffmpeg-static": "^5.3.0",
+    "lucide-react": "^1.59.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.4"
+  },
+  "author": "fatalihue",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fatalihue/YTA.git"
+  },
+  "homepage": "https://github.com/fatalihue/YTA"
+}

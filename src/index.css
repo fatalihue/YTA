@@ -1,0 +1,247 @@
+/* YTA — fundações visuais (Tailwind 4). Ponto de partida da diretriz-visual (SKILL.md).
+   Uso: copiar para o frontend e importar no index.css, ou colar no lugar do index.css inicial.
+   Este é o ÚNICO lugar com cor literal; componentes consomem os papéis (bg-bg-surface,
+   text-text-secondary, border-border-default…). Os valores de cor são um começo — validar o
+   contraste (texto 4,5:1, não-texto 3:1) antes de fechar a paleta. */
+
+@import "tailwindcss";
+
+/* motion-ok: — uma classe com esse prefixo só vale com o portão de movimento ligado
+   (html[data-animations="true"], efeito do ajuste System/On/Off). :where() mantém
+   especificidade zero. Ex.: motion-ok:animate-pulse, motion-ok:transition-transform. */
+@custom-variant motion-ok (&:where(html[data-animations="true"] *));
+
+@theme {
+  /* ── Tipografia ─────────────────────────────────────────────────────────── */
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --font-small: 'Segoe UI Variable Small', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+
+  /* Rampa única: tamanho E altura de linha. 11px é o piso. */
+  --text-caption: 11px;
+  --text-caption--line-height: 16px;
+  --text-minor: 12px;
+  --text-minor--line-height: 16px;
+  --text-body: 13px;
+  --text-body--line-height: 18px;
+  --text-subtitle: 15px;
+  --text-subtitle--line-height: 20px;
+  --text-title: 20px;
+  --text-title--line-height: 28px;
+
+  /* ── Movimento ──────────────────────────────────────────────────────────── */
+  --motion-fast: 100ms;
+  --motion-base: 150ms;
+  --motion-slow: 250ms;
+  --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Decisão do projeto (diretriz §9): desacelerada e mais curta que a entrada. */
+  --ease-exit: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* ── Raio por papel ─────────────────────────────────────────────────────── */
+  --radius-control: 4px;
+  --radius-overlay: 8px;
+  --radius-dialog: 12px;
+
+  /* ── Faixas fixas (→ h-titlebar, h-band, h-statusbar) ──────────────────── */
+  --spacing-titlebar: 40px;
+  --spacing-band: 44px;
+  --spacing-statusbar: 26px;
+
+  /* ── Cor: papéis, valores do tema ESCURO (padrão) ──────────────────────── */
+  --color-bg-base: #121316;
+  --color-bg-surface: #17181c;
+  --color-bg-card: #1d1f24;
+  --color-bg-elevated: #24262c;
+  --color-bg-input: #0f1013;
+
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-default: rgba(255, 255, 255, 0.11);
+  --color-border-strong: rgba(255, 255, 255, 0.17);
+
+  --color-text-primary: #e6e7ea;
+  --color-text-secondary: #a8abb2;
+  --color-text-tertiary: #80848e;
+  --color-text-disabled: #4c4f57;
+  /* Tinta de botão só de ícone: entre secondary e tertiary. */
+  --color-text-icon: color-mix(in srgb, var(--color-text-secondary) 50%, var(--color-text-tertiary));
+
+  --color-accent: #8ab4ff;              /* texto/ícone em accent */
+  --color-accent-solid: #2f6fe4;        /* preenchimento */
+  --color-accent-solid-hover: #3b7bf0;  /* hover que se AFASTA da tinta, nunca /80 */
+  --color-accent-ink: #ffffff;          /* texto sobre accent-solid */
+
+  /* Semânticos: tom cru = preenchimento/tinta; -fg = texto/ícone; -ink = texto sobre sólido. */
+  --color-danger: #e05252;
+  --color-danger-fg: #ff8a8a;
+  --color-danger-ink: #ffffff;
+  --color-danger-solid: #c93a3a;
+  --color-success: #3fb871;
+  --color-success-fg: #6fd69a;
+  --color-warning: #e8b13b;
+  --color-warning-fg: #f2c66b;
+
+  --color-scrim: rgba(0, 0, 0, 0.35);
+  --color-scrim-strong: rgba(0, 0, 0, 0.6);
+  /* Lavagem neutra de hover para segmentos sobre superfícies variadas. */
+  --color-wash-hover: rgba(127, 127, 127, 0.16);
+}
+
+/* ── Tema CLARO: os mesmos papéis, outros valores ─────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg-base: #f3f4f6;
+  --color-bg-surface: #fafafb;
+  --color-bg-card: #ffffff;
+  --color-bg-elevated: #eef0f3;
+  --color-bg-input: #ffffff;
+  --color-border-subtle: rgba(0, 0, 0, 0.07);
+  --color-border-default: rgba(0, 0, 0, 0.13);
+  --color-border-strong: rgba(0, 0, 0, 0.2);
+  --color-text-primary: #1b1d21;
+  --color-text-secondary: #4a4e57;
+  --color-text-tertiary: #676c76;
+  --color-text-disabled: #a6aab2;
+  --color-accent: #1f5fd1;
+  --color-accent-solid: #1f5fd1;
+  --color-accent-solid-hover: #2a6ae0;
+  --color-accent-ink: #ffffff;
+  --color-danger: #d64545;
+  --color-danger-fg: #b42323;
+  --color-danger-solid: #c93a3a;
+  --color-success: #2a9d5c;
+  --color-success-fg: #1d7a45;
+  --color-warning: #d99a1e;
+  --color-warning-fg: #8a5a00;
+  --shadow-overlay: 0 6px 20px rgba(20, 30, 50, 0.14);
+  --shadow-dialog: 0 16px 40px rgba(20, 30, 50, 0.2);
+}
+
+/* Sombras FORA do @theme de propósito: no Tailwind 4 a utility gerada a partir do @theme copia o
+   valor para dentro da regra (para injetar --tw-shadow-color), e a troca de tema nunca chegaria
+   a quem usa a classe. Variável de runtime + utility própria que a lê. */
+:root {
+  color-scheme: dark;
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow-hairline-b: inset 0 -1px 0 var(--color-border-subtle);
+
+  /* z-index semântico (→ z-dropdown, z-modal…). */
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-backdrop: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+  --z-tooltip: 60;
+}
+
+@utility shadow-overlay { box-shadow: var(--shadow-overlay); }
+@utility shadow-dialog { box-shadow: var(--shadow-dialog); }
+@utility shadow-hairline-b { box-shadow: var(--shadow-hairline-b); }
+
+@utility z-dropdown { z-index: var(--z-dropdown); }
+@utility z-sticky { z-index: var(--z-sticky); }
+@utility z-backdrop { z-index: var(--z-backdrop); }
+@utility z-modal { z-index: var(--z-modal); }
+@utility z-toast { z-index: var(--z-toast); }
+@utility z-tooltip { z-index: var(--z-tooltip); }
+
+/* ── Receitas compartilhadas ──────────────────────────────────────────────── */
+@utility label-micro {
+  font-family: var(--font-small);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Campos: sans por padrão; o campo de DADO acrescenta font-mono no call site. */
+@utility input-field {
+  @apply w-full h-8 px-2 text-body text-text-primary bg-bg-input border border-border-default rounded outline-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
+}
+@utility input-inline {
+  @apply w-full h-7 px-1.5 text-minor text-text-primary bg-bg-input border border-border-default rounded outline-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
+}
+
+@utility menu-surface {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-overlay);
+}
+@utility menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: var(--text-minor);
+  text-align: left;
+  &:hover:not(:disabled) { background: var(--color-bg-elevated); }
+  &:disabled { color: var(--color-text-disabled); cursor: default; }
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+}
+
+::selection { background: color-mix(in srgb, var(--color-accent-solid) 35%, transparent); }
+* { scrollbar-color: color-mix(in srgb, var(--color-text-primary) 22%, transparent) transparent; }
+
+/* Foco: SEM camada de propósito (vence as utilities em @layer — inclusive um outline-none
+   esquecido). Por isso um ajuste de foco num componente também tem de ser regra sem camada,
+   nunca uma utility focus-visible:… (perderia para esta). */
+:focus:not(:focus-visible) { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--color-accent-solid);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--color-text-primary); /* halo ≥3:1 em qualquer superfície */
+}
+/* Contêiner rolável que é parada de Tab dentro de um pai overflow-hidden: anel para DENTRO.
+   Marcar o elemento com data-focus-inset. */
+/* Decisão do dono (diretriz §9): os campos de link e de pasta não ganham destaque azul ao focar;
+   só a borda clareia. Regra sem camada para vencer o anel global e o focus:border das utilities. */
+[data-focus-quiet]:focus,
+[data-focus-quiet]:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: var(--color-border-strong);
+}
+[data-focus-inset]:focus-visible {
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 3px var(--color-text-primary);
+}
+
+/* Transição de cor ao trocar de tema, só com o portão ligado; em @layer base para que qualquer
+   transition-* do componente (em @layer utilities) a substitua. */
+@layer base {
+  html[data-animations="true"] :where(body, body *) {
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+  }
+}
+
+/* Campo de várias linhas (lista de links): mesma casca do input-field. */
+@utility input-area {
+  @apply w-full px-2 py-1.5 text-body text-text-primary bg-bg-input border border-border-default rounded outline-none resize-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
+}
+
+@utility tooltip-surface {
+  padding: 4px 8px;
+  font-size: var(--text-minor);
+  line-height: var(--text-minor--line-height);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: none;
+  white-space: nowrap;
+}
