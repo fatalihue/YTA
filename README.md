@@ -136,6 +136,12 @@ carrossel com vários vídeos vira um arquivo por vídeo. No vídeo, o app prefe
 Instagram (compatível com o WhatsApp), mesmo quando existe uma de resolução maior em VP9. O
 Instagram exige login para muita coisa (stories sempre) e bloqueia quem baixa demais em sequência.
 
+**Stories:** o link de um story (`/stories/conta/123…/`) baixa só aquele story; o botão da extensão
+segue o story que está na tela ao passar para o próximo. **Destaques** (`/stories/highlights/…`)
+baixam o destaque inteiro: o endereço é do destaque, não do item, e o botão avisa ("Baixar destaque
+inteiro"). Um link sem número (`/stories/conta/`) baixa todos os stories atuais da conta. Baixar
+um story conta como visualização sua.
+
 ## Login
 
 Às vezes o YouTube pede "confirme que você não é um robô" (comum depois de muitos downloads seguidos

@@ -145,6 +145,30 @@
 
   let video = null; // vídeo atual
   let videoUrl = null;
+  let lastHits = []; // elementos sob o ponteiro na última vez (YouTube: link da miniatura)
+
+  /*
+   * O link certo é o do vídeo que está NA TELA agora. Stories, Shorts e reels trocam de vídeo sem
+   * o mouse se mexer (setas, rolagem, avanço automático) — e o endereço da página muda junto.
+   * Antes o link só era recalculado no movimento do mouse: passando para o próximo story com o
+   * ponteiro parado (ou já sobre o botão), o botão seguia com o link do anterior.
+   */
+  function refreshUrl() {
+    if (!video || !video.isConnected) return;
+    const u = urlFor(video, lastHits);
+    if (u && u !== videoUrl) {
+      videoUrl = u;
+      closeMenu();
+      render();
+    }
+  }
+  // Barato: só roda com o botão visível.
+  setInterval(() => {
+    if (host.style.display === 'block') refreshUrl();
+  }, 400);
+
+  /** Destaque do Instagram: o endereço é do destaque inteiro (não muda ao passar os itens). */
+  const isHighlight = () => isInstagram && /^\/stories\/highlights\//.test(location.pathname);
   let pointer = { x: 0, y: 0 };
   const hidden = new WeakSet(); // vídeos em que o usuário clicou no ×
   const jobs = new Map(); // url → { id, phase, percent, part, copy, error }
@@ -188,6 +212,7 @@
           video = v;
           closeMenu();
         }
+        lastHits = hits;
         videoUrl = urlFor(v, hits) || videoUrl;
         render();
         place();
@@ -212,8 +237,10 @@
     const job = videoUrl ? jobs.get(videoUrl) : null;
     mainBtn.classList.remove('busy');
     if (!job) {
-      textEl.innerHTML = `Baixar · ${choiceLabel(choice)}`;
-      mainBtn.setAttribute('aria-label', `Baixar com o YTA: ${choiceLabel(choice)}`);
+      // Destaque: o yt-dlp não tem como escolher o item, então o rótulo diz que vem tudo.
+      const what = isHighlight() ? 'Baixar destaque inteiro' : 'Baixar';
+      textEl.innerHTML = `${what} · ${choiceLabel(choice)}`;
+      mainBtn.setAttribute('aria-label', `${what} com o YTA: ${choiceLabel(choice)}`);
       return;
     }
     const pct = job.percent == null ? '' : ` <span class="num">${Math.floor(job.percent)}%</span>`;
@@ -296,6 +323,7 @@
   }
 
   mainBtn.addEventListener('click', () => {
+    refreshUrl(); // o vídeo pode ter trocado desde o último movimento do mouse
     const job = videoUrl && jobs.get(videoUrl);
     if (job?.phase === 'done') return ask({ type: 'reveal', id: job.id });
     if (job?.phase === 'error' || job?.phase === 'offline') {
