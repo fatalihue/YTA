@@ -33,6 +33,20 @@ const items = new Map(); // id → estado resumido (a interface manda a cada mud
 const fromExtension = new Set(); // ids pedidos pela extensão (recebem notificação)
 const stateFile = () => path.join(app.getPath('userData'), 'bridge.json');
 
+/** Registro de diagnóstico (yta.log na pasta de dados, até ~200 KB): o app reaberto pelo
+ * instalador ou pela bandeja não tem console visível. */
+const logFile = () => path.join(app.getPath('userData'), 'yta.log');
+function log(...parts) {
+  const line = `${new Date().toISOString()} [v${app.getVersion()}] ${parts.join(' ')}
+`;
+  try {
+    const f = logFile();
+    if (fs.existsSync(f) && fs.statSync(f).size > 200 * 1024) fs.renameSync(f, `${f}.old`);
+    fs.appendFileSync(f, line);
+  } catch {}
+  console.warn(line.trim());
+}
+
 const readState = () => {
   try {
     return JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
@@ -321,11 +335,13 @@ function extensionVersion() {
   }
 }
 function ensureExtensionSynced() {
-  if (extensionVersion() === app.getVersion()) return;
+  if (extensionVersion() === app.getVersion()) return true;
   try {
     syncExtension();
+    log('[bridge] extensão copiada para a versão', String(extensionVersion()));
+    return extensionVersion() === app.getVersion();
   } catch (err) {
-    console.warn('[bridge] syncExtension:', err.message);
+    log('[bridge] syncExtension falhou:', err.code || '', err.message);
   }
 }
 
@@ -365,10 +381,16 @@ function init(context) {
     try {
       step();
     } catch (err) {
-      console.warn(`[bridge] ${step.name}:`, err.message);
+      log(`[bridge] ${step.name} falhou:`, err.message);
     }
   }
-  setTimeout(ensureExtensionSynced, 15_000);
+  // Até a pasta da extensão estar na versão do app: a cada 15 s, no máximo 20 vezes.
+  let tries = 0;
+  const retry = setInterval(() => {
+    tries++;
+    if (ensureExtensionSynced() || tries >= 20) clearInterval(retry);
+  }, 15_000);
+  log('[bridge] iniciado', process.argv.slice(1).join(' '), '| extensão na versão', String(extensionVersion()));
   const link = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));
   if (link) handleProtocol(link);
 }
