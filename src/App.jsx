@@ -154,14 +154,19 @@ export default function App() {
   }, []);
 
   // Estado resumido de cada item para o processo principal: é de onde a extensão lê o andamento.
+  const reportTimer = useRef(null);
   useEffect(() => {
-    api.reportItems(
-      items.map((it) => ({
-        id: it.id, url: it.url, title: it.title, format: it.format, phase: it.phase,
-        part: it.progress?.part || null, percent: it.progress?.percent ?? null,
-        copy: it.progress?.copy ?? null, file: it.file || null, error: it.error || null,
-      })),
-    );
+    if (reportTimer.current) return; // já há um envio marcado; ele lê a fila mais recente
+    reportTimer.current = setTimeout(() => {
+      reportTimer.current = null;
+      api.reportItems(
+        itemsRef.current.map((it) => ({
+          id: it.id, url: it.url, title: it.title, format: it.format, phase: it.phase,
+          part: it.progress?.part || null, percent: it.progress?.percent ?? null,
+          copy: it.progress?.copy ?? null, file: it.file || null, error: it.error || null,
+        })),
+      );
+    }, 250);
   }, [items]);
 
   useEffect(() => save('folder', folder), [folder]);
@@ -179,12 +184,15 @@ export default function App() {
       running.current.add(item.id);
       patch(item.id, { phase: 'preparing', progress: {}, error: null, retry: null });
       const { id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle } = item;
-      api.run({ id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, title: pageTitle }).then((r) => {
-        running.current.delete(item.id);
-        if (r.ok) patch(item.id, { phase: 'done', file: r.file, files: r.files || [r.file], retry: null });
-        else if (r.cancelled) patch(item.id, { phase: 'cancelled', retry: null });
-        else patch(item.id, { phase: 'error', error: r.error, needsLogin: Boolean(r.needsLogin), retry: null });
-      });
+      api
+        .run({ id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, title: pageTitle })
+        .catch((err) => ({ ok: false, error: `Erro interno do YTA: ${err?.message || err}` }))
+        .then((r) => {
+          running.current.delete(item.id);
+          if (r.ok) patch(item.id, { phase: 'done', file: r.file, files: r.files || [r.file], retry: null });
+          else if (r.cancelled) patch(item.id, { phase: 'cancelled', retry: null });
+          else patch(item.id, { phase: 'error', error: r.error, needsLogin: Boolean(r.needsLogin), retry: null });
+        });
     }
   }, [items, tool.state]);
 

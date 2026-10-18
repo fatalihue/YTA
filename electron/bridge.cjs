@@ -2,12 +2,14 @@
  * Ponte do YTA com o Windows e com a extensão do navegador:
  * - janela única (um segundo clique ou um yta:// vai para o YTA já aberto);
  * - bandeja: fechar a janela deixa o app rodando, para a extensão sempre achá-lo;
- * - yta://add?url=…  abre o YTA (se estiver fechado) e põe o link na fila;
+ * - yta://start abre o YTA na bandeja (para a extensão falar com ele); yta://open mostra a janela;
  * - servidor em 127.0.0.1 para a extensão: enfileirar, consultar andamento, resoluções;
  * - notificações do Windows para pedidos vindos da extensão.
  *
  * Segurança do servidor: só responde a pedidos com o cabeçalho X-YTA (uma página comum não
- * consegue enviá-lo sem um preflight, que é negado) e, quando há Origin, só à nossa extensão.
+ * consegue enviá-lo sem um preflight, que é negado), com Host 127.0.0.1/localhost (barra o DNS
+ * rebinding, em que um site aponta o próprio domínio para 127.0.0.1 e vira "mesma origem") e,
+ * quando há Origin, só à nossa extensão.
  */
 const { app, Tray, Menu, Notification, nativeImage, shell, dialog, clipboard, ipcMain } = require('electron');
 const http = require('node:http');
@@ -73,17 +75,10 @@ function handleProtocol(link) {
   } catch {
     return;
   }
-  if (u.hostname === 'add' && u.searchParams.get('url')) {
-    enqueue({
-      url: u.searchParams.get('url'),
-      format: u.searchParams.get('format') || undefined,
-      maxHeight: Number(u.searchParams.get('maxHeight')) || null,
-      compat: u.searchParams.get('compat') === '1',
-    }).catch(() => {});
-  } else if (u.hostname !== 'start') {
-    // yta://start só abre o app (na bandeja) para a extensão poder falar com ele.
-    showWindow();
-  }
+  // Só abrir: pôr links na fila é pelo servidor local (que confere que o pedido é da extensão).
+  // Um yta://add?url=… deixaria qualquer site enfileirar downloads depois do "Abrir o YTA?".
+  if (u.hostname === 'open') showWindow();
+  // yta://start: só abre o app (na bandeja) para a extensão poder falar com ele.
 }
 
 function showWindow() {
@@ -127,11 +122,20 @@ function quit() {
   app.quit();
 }
 
+const shown = new Set();
 function notify(title, body, onClick) {
   if (!Notification.isSupported()) return;
   const n = new Notification({ title, body, icon: path.join(__dirname, 'tray.png'), silent: true });
-  if (onClick) n.on('click', onClick);
+  shown.add(n);
+  const release = () => shown.delete(n);
+  n.on('click', () => {
+    release();
+    onClick?.();
+  });
+  n.on('close', release);
+  n.on('failed', release);
   n.show();
+  setTimeout(release, 10 * 60 * 1000); // teto, caso o Windows nunca avise o fechamento
 }
 
 /* ---------- Fila: pedidos externos entram pela interface (que é dona da fila) ---------- */
@@ -141,7 +145,7 @@ function enqueue(request) {
   const payload = { reqId, ...request };
   return new Promise((resolve) => {
     waitingReply.set(reqId, resolve);
-    if (ctx.rendererReady()) ctx.getWin().webContents.send('external-add', payload);
+    if (ctx?.rendererReady()) ctx.getWin().webContents.send('external-add', payload);
     else queuedForRenderer.push(payload);
     setTimeout(() => {
       if (waitingReply.delete(reqId)) resolve({ ok: false, error: 'O YTA não respondeu.' });
@@ -188,6 +192,7 @@ ipcMain.on('items-state', (_e, list) => {
 function startServer() {
   const server = http.createServer(async (req, res) => {
     const origin = req.headers.origin;
+    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(req.headers.host || '')) return deny(res, 403);
     if (origin && origin !== EXTENSION_ORIGIN) return deny(res, 403);
     if (req.method === 'OPTIONS') return deny(res, 403); // sem preflight: páginas não chegam aqui
     if (req.headers['x-yta'] !== '1') return deny(res, 403);

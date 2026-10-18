@@ -41,9 +41,17 @@ async function downloadYtDlp() {
   fs.renameSync(tmp, ytdlpPath);
 }
 
+const updateStamp = path.join(binDir, 'last-update-check');
+const UPDATE_EVERY = 12 * 60 * 60 * 1000;
 function updateYtDlp() {
+  try {
+    if (Date.now() - fs.statSync(updateStamp).mtimeMs < UPDATE_EVERY) return Promise.resolve();
+  } catch {}
   return new Promise((resolve) => {
-    execFile(ytdlpPath, ['-U'], { windowsHide: true, timeout: 60_000 }, () => resolve());
+    execFile(ytdlpPath, ['-U'], { windowsHide: true, timeout: 60_000 }, (err) => {
+      if (!err) fs.writeFileSync(updateStamp, new Date().toISOString());
+      resolve();
+    });
   });
 }
 
@@ -52,6 +60,7 @@ function prepareTool() {
     if (!fs.existsSync(ytdlpPath)) {
       send('tool-status', { state: 'installing' });
       await downloadYtDlp();
+      fs.writeFileSync(updateStamp, new Date().toISOString()); // acabou de vir: é a versão mais nova
     } else {
       send('tool-status', { state: 'updating' });
       await updateYtDlp(); // falha de rede aqui não impede o uso da versão local
@@ -72,7 +81,7 @@ function friendlyError(stderr) {
     .reverse()
     .find((l) => l.startsWith('ERROR:'));
   const raw = (line || stderr.trim().split(/\r?\n/).pop() || '').replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]+:\s*)?/, '');
-  if (/drm/i.test(raw)) return 'Protegido por DRM: este site não permite baixar o vídeo.';
+  if (/\bdrm\b/i.test(raw)) return 'Protegido por DRM: este site não permite baixar o vídeo.';
   if (/private video/i.test(raw)) return 'O vídeo é privado.';
   if (/requested format is not available/i.test(raw)) return 'Este vídeo não tem áudio disponível nesse formato (pode ser mudo).';
   if (/unavailable|not available|does not exist/i.test(raw)) return 'O vídeo não está disponível.';
@@ -101,7 +110,7 @@ function needsLogin(stderr) {
 
 /** Rede, bloqueio temporário ou processo encerrado sem motivo valem nova tentativa; vídeo privado não. */
 function isRetryable(stderr) {
-  return !LOGIN_ERRORS.test(stderr) && !NOT_FOUND.test(stderr) && !/drm|private video|unavailable|not available|does not exist|no video in this post|not a valid url|live event|is live/i.test(stderr);
+  return !LOGIN_ERRORS.test(stderr) && !NOT_FOUND.test(stderr) && !/\bdrm\b|private video|unavailable|not available|does not exist|no video in this post|not a valid url|live event|is live/i.test(stderr);
 }
 
 /** Site do link (define qual login usar): youtube, instagram ou o domínio (ex.: vimeo.com). */
@@ -126,6 +135,7 @@ async function pause(job, ms) {
 function killTree(pid) {
   execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
 }
+const isAlive = (child) => child && child.exitCode === null && child.signalCode === null;
 
 const num = (v) => (v === undefined || v === 'NA' || v === 'N/A' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
@@ -158,6 +168,7 @@ function safeName(name) {
     .replace(/[. ]+$/, '')
     .slice(0, 180)
     .trim();
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(clean)) return `_${clean}`;
   return clean || 'audio';
 }
 
@@ -248,7 +259,7 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
       ? ['-S', VIDEO_SORT, '-f', siteOf(url) === 'instagram' ? instagramVideoSelect(maxHeight) : videoSelect(maxHeight)]
       : ['-f', FORMATS[format].select]),
     '--ffmpeg-location', ffmpegPath,
-    '-o', path.join(workDir, 'stream.%(format_id)s.%(ext)s'),
+    '-o', path.join(workDir, '%(id)s.%(format_id)s.%(ext)s'),
     '--progress-template',
     'download:YTA_PROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s',
     '--print', 'before_dl:YTA_META %(.{id,extractor,title,description,uploader,channel,artist,duration,upload_date,webpage_url,acodec,vcodec,height,filesize,filesize_approx})j',
@@ -305,12 +316,12 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
         // Com o tamanho real, o tempo restante sai dele (a estimativa do yt-dlp oscila em pedaços).
         const left = known && total === null && speed ? Math.max(0, (known - done) / speed) : eta;
         progress({ percent, done: done !== null && size ? Math.min(done, size) : done, size, speed, eta: left }, percent === 100);
-      } else if (line.startsWith('YTA_FILE ')) {
+      } else if (line.startsWith('YTA_FILE ') && current) {
         const { entry, ...stream } = current;
         entry.streams.push({ ...stream, file: line.slice('YTA_FILE '.length) });
       }
     });
-    child.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+    child.stderr.on('data', (c) => (stderr = (stderr + c.toString('utf8')).slice(-20_000)));
     child.on('error', (err) => reject(new Error(`Não foi possível iniciar o yt-dlp: ${err.message}`)));
     child.on('close', (code) => {
       if (job.cancelled) reject(new Cancelled());
@@ -487,7 +498,7 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat, med
   if (format !== 'video' && !FORMATS[format]) return { ok: false, error: `Formato desconhecido: ${format}.` };
   const job = { child: null, cancelled: false };
   jobs.set(id, job);
-  const workDir = path.join(workRoot, String(id));
+  const workDir = path.join(workRoot, `${id}-${Date.now().toString(36)}`);
   let out = null;
   try {
     if (!toolReady) prepareTool();
@@ -688,10 +699,11 @@ async function readBrowserCookies(exe, { visit = null } = {}) {
       }
     });
     const call = (method, params = {}) =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         const id = ++seq;
         pending.set(id, resolve);
         ws.send(JSON.stringify({ id, method, params }));
+        setTimeout(() => pending.delete(id) && reject(new Error('O navegador do login não respondeu.')), 15_000);
       });
     if (visit) {
       // Visita o YouTube para o navegador renovar a sessão antes de entregar os cookies.
@@ -700,10 +712,10 @@ async function readBrowserCookies(exe, { visit = null } = {}) {
     }
     const res = await call('Storage.getCookies');
     await call('Browser.close'); // saída limpa: o perfil grava o que renovou
-    await new Promise((r) => (child.exitCode !== null ? r() : child.once('exit', r)));
+    await Promise.race([new Promise((r) => (child.exitCode !== null ? r() : child.once('exit', r))), sleep(10_000)]);
     return res.result?.cookies || [];
   } finally {
-    if (child.exitCode === null) killTree(child.pid);
+    if (isAlive(child)) killTree(child.pid);
   }
 }
 
@@ -741,7 +753,7 @@ function freshCookies(site) {
     if (!exe || !fs.existsSync(exe)) throw new Error('O navegador do login não foi encontrado. Entre de novo.');
     const cookies = await readBrowserCookies(exe, { visit: SITES[site]?.visit || null });
     if (SITES[site] && !hasLogin(cookies, site)) {
-      throw new Error(`O login do ${site === 'instagram' ? 'Instagram' : 'YouTube'} expirou. Entre de novo.`);
+      throw Object.assign(new Error(`O login do ${site === 'instagram' ? 'Instagram' : 'YouTube'} expirou. Entre de novo.`), { loginKind: 'required' });
     }
     if (!SITES[site] && !hasDomainCookies(cookies, site)) {
       throw Object.assign(new Error(`Este site exige login. Entre na sua conta de ${site} pelo YTA e tente de novo.`), { loginKind: 'required' });
@@ -851,7 +863,7 @@ function cancelJob(id) {
   const job = jobs.get(id);
   if (!job) return;
   job.cancelled = true;
-  if (job.child) killTree(job.child.pid);
+  if (isAlive(job.child)) killTree(job.child.pid);
 }
 
 function createWindow() {
@@ -933,6 +945,9 @@ app.whenReady().then(() => {
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
   bridge.init({ getWin: () => win, probe, rendererReady: () => rendererReady });
+});
+app.on('before-quit', () => {
+  for (const id of jobs.keys()) cancelJob(id);
 });
 app.on('window-all-closed', () => {
   for (const id of jobs.keys()) cancelJob(id);

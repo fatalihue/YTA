@@ -158,9 +158,13 @@
   }
 
   let ticking = false;
+  // Coleção viva: contar os vídeos da página não custa nada. Sem vídeo, o movimento do mouse é
+  // ignorado sem nenhum cálculo (o script roda em todas as páginas e quadros).
+  const videos = document.getElementsByTagName('video');
   document.addEventListener(
     'pointermove',
     (e) => {
+      if (!videos.length && !video) return;
       pointer = { x: e.clientX, y: e.clientY };
       if (ticking) return;
       ticking = true;
@@ -189,7 +193,7 @@
   );
   // Sites põem camadas por cima do <video>: procura um vídeo que contenha o ponto.
   function findVideoBehind() {
-    for (const v of document.querySelectorAll('video')) {
+    for (const v of videos) {
       const r = v.getBoundingClientRect();
       if (pointer.x >= r.left && pointer.x <= r.right && pointer.y >= r.top && pointer.y <= r.bottom) return v;
     }

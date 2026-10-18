@@ -1,4 +1,5 @@
 import { AlertCircle, CheckCircle2, CircleSlash, Clock, FolderOpen, Loader2, RotateCw, Trash2, X } from 'lucide-react';
+import { memo } from 'react';
 import { Button, IconButton } from './ui.jsx';
 
 const decimal = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -49,14 +50,18 @@ function details(item) {
   return [];
 }
 
-export function QueueItem({ item, onCancel, onRetry, onRemove, onReveal, onLogin }) {
+// Os callbacks vêm recriados a cada render da fila, mas só dependem do próprio item: com o item
+// igual, o item antigo e os callbacks antigos fazem a mesma coisa.
+export const QueueItem = memo(QueueItemView, (a, b) => a.item === b.item);
+
+function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin }) {
   const base = PHASE[item.phase];
   // Formato original só troca a embalagem; MP3 (ou fallback sem o codec) converte de fato.
   const phase =
     item.phase === 'preparing' && item.retry?.media
       ? { ...base, text: 'Página não reconhecida; baixando o vídeo que ela tocava…' }
       : item.phase === 'preparing' && item.retry?.login
-      ? { ...base, text: 'O YouTube pediu verificação; tentando com o login…' }
+      ? { ...base, text: 'O site pediu login; tentando com a sua conta…' }
       : item.phase === 'preparing' && item.retry
       ? { ...base, text: `A conexão caiu, retomando (tentativa ${item.retry.attempt} de ${item.retry.max})…` }
       : item.phase === 'download' && item.progress?.part
