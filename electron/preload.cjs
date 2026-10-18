@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('yta', {
   run: (job) => ipcRenderer.invoke('run-job', job),
   probe: (url) => ipcRenderer.invoke('probe', url),
   loginStatus: () => ipcRenderer.invoke('login-status'),
-  login: () => ipcRenderer.invoke('login'),
+  login: (url) => ipcRenderer.invoke('login', url),
   logout: () => ipcRenderer.invoke('logout'),
   cancel: (id) => ipcRenderer.invoke('cancel-job', id),
   reveal: (file) => ipcRenderer.invoke('reveal', file),

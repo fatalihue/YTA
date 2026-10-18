@@ -19,4 +19,22 @@ openBtn.addEventListener('click', async () => {
   window.close();
 });
 
+/* Sites em que o botão foi escondido ("Não mostrar em …" no menu do botão). */
+const hiddenEl = document.getElementById('hidden-sites');
+async function showHidden() {
+  const { hiddenSites = [] } = await chrome.storage.sync.get('hiddenSites');
+  hiddenEl.hidden = !hiddenSites.length;
+  if (!hiddenSites.length) return;
+  hiddenEl.textContent = `Botão oculto em: ${hiddenSites.map((h) => h.replace(/^www\./, '')).join(', ')}. `;
+  const undo = document.createElement('button');
+  undo.className = 'link';
+  undo.textContent = 'Mostrar de novo';
+  undo.addEventListener('click', async () => {
+    await chrome.storage.sync.set({ hiddenSites: [] });
+    showHidden();
+  });
+  hiddenEl.append(undo);
+}
+
 refresh();
+showHidden();

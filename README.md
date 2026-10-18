@@ -1,7 +1,7 @@
 # YTA
 
-Cola um ou mais links do YouTube ou do Instagram, escolhe a pasta e o formato, e sai o arquivo de
-áudio ou o vídeo completo. App desktop para Windows (Electron + React + Tailwind 4).
+Cola um ou mais links de vídeo (YouTube, Instagram e a maioria dos sites), escolhe a pasta e o
+formato, e sai o arquivo de áudio ou o vídeo completo. App desktop para Windows (Electron + React + Tailwind 4).
 
 ## Instalar
 
@@ -24,14 +24,15 @@ O feed é o `latest.yml` da release mais recente, lido pelo endereço fixo
 
 ## Extensão do navegador
 
-Um botão **"Baixar"** aparece no canto dos vídeos do YouTube (página, Shorts, prévias) e do
-Instagram (feed, reels, posts), como o do IDM:
+Um botão **"Baixar"** aparece no canto dos vídeos de qualquer site — com regras próprias no YouTube
+(página, Shorts, prévias, players embutidos) e no Instagram (feed, reels, posts) —, como o do IDM:
 
 - **clique no corpo**: baixa com a última escolha (ex.: "Áudio M4A");
 - **setinha**: menu com áudio (M4A, Opus, MP3), vídeo (melhor ou as resoluções reais daquele vídeo)
   e "Compatível com WhatsApp (H.264)";
 - o próprio botão mostra o andamento: na fila → baixando % → **Salvo · Abrir pasta**;
-- o **×** esconde o botão naquele vídeo; clique direito em um link: "Baixar com o YTA".
+- o **×** esconde o botão naquele vídeo; **"Não mostrar em …"** (no menu) esconde no site todo
+  (desfaz pelo ícone da extensão); clique direito em um link: "Baixar com o YTA".
 
 O download acontece no YTA (mesma fila, pasta e formatos); a extensão só envia o pedido. Com o YTA
 fechado, ela o abre pelo `yta://` (o Chrome pergunta "Abrir o YTA?" na primeira vez — marque
@@ -90,6 +91,21 @@ Atenção ao tamanho: 1 h em 4K passa fácil de 10 GB.
 é juntado; o resto é convertido pela placa de vídeo (NVIDIA, Intel ou AMD) ou, sem ela, pelo
 processador. O arquivo convertido fica maior (4K em H.264 ≈ 2× o VP9).
 
+## Outros sites
+
+Qualquer link `http(s)` é aceito. O yt-dlp reconhece ~1.800 sites (Vimeo, X/Twitter, TikTok,
+Facebook, Reddit, Twitch, Dailymotion, SoundCloud, sites de notícia…) e tem um extrator genérico
+que procura o vídeo no HTML das outras páginas. Se nem assim achar, a extensão manda junto o arquivo
+de vídeo que a página estava tocando (`.m3u8`, `.mpd`, `.mp4`) e o YTA baixa direto dele, com o
+título da página — o mesmo truque do IDM.
+
+- Páginas com vários vídeos baixam todos (um arquivo por vídeo).
+- Muitos sites exigem conta (Vimeo, Reddit…): "Entrar e tentar de novo" abre o site na janela de
+  login do YTA; entre e feche a janela.
+- Serviços com **DRM** (Netflix, Prime Video, Disney+, Spotify, Globoplay…) não dá para baixar.
+- Extratores do yt-dlp às vezes quebram quando um site muda; o yt-dlp é atualizado a cada abertura
+  do YTA e as correções chegam sozinhas.
+
 ## Instagram
 
 Aceita links de posts, reels, IGTV e stories. O arquivo sai como "conta - código do post" (o título
@@ -98,12 +114,13 @@ carrossel com vários vídeos vira um arquivo por vídeo. No vídeo, o app prefe
 Instagram (compatível com o WhatsApp), mesmo quando existe uma de resolução maior em VP9. O
 Instagram exige login para muita coisa (stories sempre) e bloqueia quem baixa demais em sequência.
 
-## Login (YouTube e Instagram)
+## Login
 
 Às vezes o YouTube pede "confirme que você não é um robô" (comum depois de muitos downloads seguidos
 do mesmo IP) ou exige login por restrição de idade; o Instagram exige login para muitos posts.
-"Entrar no YouTube/Instagram…" abre o Chrome (ou o Edge, se não houver Chrome) num perfil separado,
-só do YTA, com uma aba para cada site: entre nas contas que quiser e feche a janela. O login fica
+"Entrar em sites…" abre o Chrome (ou o Edge, se não houver Chrome) num perfil separado,
+só do YTA, com abas do YouTube e do Instagram (e do site do item, quando vem de "Entrar e tentar
+de novo"; dá para abrir qualquer outro site nessa janela): entre nas contas que quiser e feche-a. O login fica
 nesse perfil, sem mexer no seu navegador, e é usado **apenas** quando o site exige: o app reabre o
 perfil invisível, renova os cookies e o item tenta de novo sozinho. "Sair" apaga o perfil e os
 cookies.

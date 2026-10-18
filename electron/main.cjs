@@ -72,34 +72,48 @@ function friendlyError(stderr) {
     .reverse()
     .find((l) => l.startsWith('ERROR:'));
   const raw = (line || stderr.trim().split(/\r?\n/).pop() || '').replace(/^ERROR:\s*(\[[^\]]+\]\s*[\w-]+:\s*)?/, '');
+  if (/drm/i.test(raw)) return 'Protegido por DRM: este site não permite baixar o vídeo.';
   if (/private video/i.test(raw)) return 'O vídeo é privado.';
   if (/requested format is not available/i.test(raw)) return 'Este vídeo não tem áudio disponível nesse formato (pode ser mudo).';
   if (/unavailable|not available|does not exist/i.test(raw)) return 'O vídeo não está disponível.';
   if (/sign in to confirm your age|age-restricted/i.test(raw)) return 'O vídeo tem restrição de idade e exige login no YouTube.';
   if (/sign in to confirm/i.test(raw)) return 'O YouTube pediu verificação de que não é um robô e exige login.';
   if (/cookies/i.test(raw) && /invalid|expired|no longer valid/i.test(raw)) return 'O login do YouTube expirou. Entre de novo.';
-  if (/empty media response|login required|requires? (a )?log ?in|you need to log in/i.test(raw)) return 'O Instagram exige login para este conteúdo.';
+  if (/empty media response/i.test(raw)) return 'O Instagram exige login para este conteúdo.';
+  if (GENERIC_LOGIN.test(raw)) return 'Este site exige login. Entre na conta pelo YTA e tente de novo.';
   if (/rate-?limit/i.test(raw)) return 'O Instagram limitou os acessos. Entre na conta ou tente mais tarde.';
   if (/there is no video in this post|no video formats/i.test(raw)) return 'Este post não tem vídeo.';
   if (/unable to download webpage|getaddrinfo|timed out|connection/i.test(raw)) return 'Sem conexão. Verifique a internet.';
-  if (/is not a valid url|unsupported url/i.test(raw)) return 'Endereço não reconhecido como vídeo do YouTube ou do Instagram.';
+  if (/is not a valid url/i.test(raw)) return 'Endereço inválido.';
+  if (/unsupported url|no video could be found|no media found/i.test(raw)) return 'Não encontrei vídeo nesta página.';
   if (/live event|is live/i.test(raw)) return 'Transmissões ao vivo não podem ser baixadas.';
   return raw || 'O yt-dlp encerrou sem dizer o motivo.';
 }
 
-/** Pedidos que só passam com login (verificação de robô, idade, conteúdo do Instagram). */
-const LOGIN_ERRORS = /sign in to confirm|age-restricted|confirm your age|empty media response|login required|requires? (a )?log ?in|you need to log in|rate-?limit/i;
+/** Pedidos que só passam com login (verificação de robô, idade, Instagram e qualquer site que peça conta). */
+const GENERIC_LOGIN = /login required|requires? (a )?log ?in|you need to log in|logged-in|authentication is required|registered users|members only|use --cookies/i;
+const LOGIN_ERRORS = new RegExp(`sign in to confirm|age-restricted|confirm your age|empty media response|rate-?limit|${GENERIC_LOGIN.source}`, 'i');
+/** A página não tem vídeo que o yt-dlp reconheça (aí vale tentar o arquivo que a extensão viu). */
+const NOT_FOUND = /unsupported url|no video could be found|no media found|no video formats/i;
 function needsLogin(stderr) {
   return LOGIN_ERRORS.test(stderr);
 }
 
 /** Rede, bloqueio temporário ou processo encerrado sem motivo valem nova tentativa; vídeo privado não. */
 function isRetryable(stderr) {
-  return !LOGIN_ERRORS.test(stderr) && !/private video|unavailable|not available|does not exist|no video in this post|not a valid url|unsupported url|live event|is live/i.test(stderr);
+  return !LOGIN_ERRORS.test(stderr) && !NOT_FOUND.test(stderr) && !/drm|private video|unavailable|not available|does not exist|no video in this post|not a valid url|live event|is live/i.test(stderr);
 }
 
-/** Site do link (define qual login usar). */
-const siteOf = (url) => (/instagram\.com/i.test(url) ? 'instagram' : 'youtube');
+/** Site do link (define qual login usar): youtube, instagram ou o domínio (ex.: vimeo.com). */
+function siteOf(url) {
+  let host = '';
+  try {
+    host = new URL(url).hostname.replace(/^(www|m)\./, '');
+  } catch {}
+  if (/(^|\.)(youtube\.com|youtu\.be)$/.test(host)) return 'youtube';
+  if (/(^|\.)instagram\.com$/.test(host)) return 'instagram';
+  return host || 'outro';
+}
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS = [3000, 8000]; // antes da 2ª e da 3ª tentativa
@@ -205,15 +219,16 @@ const VIDEO_SORT = 'res,fps,vcodec:h264,acodec:aac';
 const instagramVideoSelect = (maxHeight) => `b[format_id!^=dash]${NO_HLS}/${videoSelect(maxHeight)}`;
 function videoSelect(maxHeight) {
   const h = maxHeight ? `[height<=${Number(maxHeight)}]` : '';
-  return `(bv*${h}${NO_HLS},ba${NO_HLS})/b${h}${NO_HLS}/b${h}/b`;
+  return `(bv*${h}${NO_HLS},ba${NO_HLS})/b${h}${NO_HLS}/(bv*${h},ba)/b${h}/b`;
 }
 
 /** Etapa 1: yt-dlp baixa o(s) fluxo(s) para uma pasta de trabalho. */
-function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin) {
+function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, referer) {
   const video = format === 'video';
   const args = [
     ...jsRuntimeArgs,
     ...(withLogin ? ['--cookies', cookiesFile] : []),
+    ...(referer ? ['--referer', referer] : []),
     '--no-playlist',
     '--no-simulate',
     '--progress',
@@ -300,7 +315,7 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin) {
     child.on('close', (code) => {
       if (job.cancelled) reject(new Cancelled());
       else if (code === 0 && entries.some((e) => e.streams.length)) resolve({ entries: entries.filter((e) => e.streams.length) });
-      else reject(Object.assign(new Error(friendlyError(stderr)), { retryable: isRetryable(stderr), needsLogin: needsLogin(stderr) }));
+      else reject(Object.assign(new Error(friendlyError(stderr)), { stderr, retryable: isRetryable(stderr), needsLogin: needsLogin(stderr) }));
     });
   });
 }
@@ -467,7 +482,7 @@ async function plan(format, bitrate, streams, meta, compat) {
   };
 }
 
-async function runJob({ id, url, folder, format, bitrate, maxHeight, compat }) {
+async function runJob({ id, url, folder, format, bitrate, maxHeight, compat, mediaUrl, referer, title }) {
   if (jobs.has(id)) return { ok: false, error: 'Esse item já está em andamento.' };
   if (format !== 'video' && !FORMATS[format]) return { ok: false, error: `Formato desconhecido: ${format}.` };
   const job = { child: null, cancelled: false };
@@ -483,12 +498,22 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat }) {
 
     let fetched;
     let withLogin = false; // o login só entra quando o site exige
+    let source = url; // a página; o arquivo de vídeo detectado pela extensão é o plano B
+    let usedMedia = false;
     const site = siteOf(url);
     for (let attempt = 1; ; attempt++) {
       try {
-        fetched = await fetchStreams(job, id, url, workDir, format, maxHeight, withLogin);
+        fetched = await fetchStreams(job, id, source, workDir, format, maxHeight, withLogin, usedMedia ? referer || url : null);
         break;
       } catch (err) {
+        if (!usedMedia && mediaUrl && /^https?:/i.test(mediaUrl) && NOT_FOUND.test(err.stderr || err.message)) {
+          // O yt-dlp não reconheceu a página: baixa o arquivo que o navegador estava tocando (como o IDM).
+          usedMedia = true;
+          source = mediaUrl;
+          attempt--;
+          send('job-event', { id, type: 'retry', media: true });
+          continue;
+        }
         if (err.needsLogin && !withLogin && isLoggedIn(site)) {
           withLogin = true;
           attempt--; // a tentativa com login não conta como queda de conexão
@@ -507,6 +532,8 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat }) {
     const ext = format === 'video' ? 'mp4' : format;
     const files = [];
     for (const { streams, meta } of fetched.entries) {
+      // Arquivo direto (ex.: master.m3u8) não tem título: usa o da página.
+      if (usedMedia && title) Object.assign(meta, { title, extractor: 'generic' });
       if (job.cancelled) throw new Cancelled();
       out = uniqueFile(folder, safeName(fileTitle(meta)), ext);
       reserved.add(out.toLowerCase());
@@ -520,7 +547,7 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat }) {
   } catch (err) {
     if (out) fs.rmSync(`${out}.part`, { force: true });
     if (err instanceof Cancelled) return { ok: false, cancelled: true };
-    if (err.loginKind === 'refused') return { ok: false, error: 'O YouTube recusou mesmo com login. Tente mais tarde.' };
+    if (err.loginKind === 'refused') return { ok: false, error: 'O site recusou mesmo com login. Tente mais tarde.' };
     return { ok: false, error: err.message, needsLogin: err.loginKind === 'required' };
   } finally {
     if (out) reserved.delete(out.toLowerCase());
@@ -615,10 +642,15 @@ function loginInfo() {
 
 /** Conectado a um site (ou a algum, sem argumento). */
 function isLoggedIn(site) {
+  if (site && !SITES[site]) return fs.existsSync(loginProfile); // outros sites: tenta com o perfil
   const info = loginInfo();
   if (!info || !fs.existsSync(loginProfile)) return false;
   return site ? Boolean(info.sites?.[site]) : Object.values(info.sites || {}).some(Boolean);
 }
+
+/** Cookies do domínio do site (para "outros sites": qualquer cookie dele conta como sessão). */
+const hasDomainCookies = (cookies, site) =>
+  cookies.some((c) => c.domain.replace(/^\./, '') === site || c.domain.replace(/^\./, '').endsWith(`.${site}`));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -675,9 +707,9 @@ async function readBrowserCookies(exe, { visit = null } = {}) {
   }
 }
 
-/** Grava os cookies do YouTube/Google no formato Netscape (o que o yt-dlp lê). */
+/** Grava os cookies do perfil do YTA (só tem os sites em que você entrou) no formato do yt-dlp. */
 function writeCookiesFile(cookies) {
-  const mine = cookies.filter((c) => /(^|\.)(youtube|google|instagram)\.com$/.test(c.domain.replace(/^\./, '')));
+  const mine = cookies;
   const lines = mine.map((c) => {
     const domain = c.domain;
     return [
@@ -705,11 +737,15 @@ function freshCookies(site) {
   if (refreshing[site]) return refreshing[site];
   if (Date.now() - (refreshedAt[site] || 0) < 60_000 && fs.existsSync(cookiesFile)) return Promise.resolve();
   const run = browserBusy.then(async () => {
-    const info = loginInfo();
-    if (!info || !fs.existsSync(info.exe)) throw new Error('O navegador do login não foi encontrado. Entre de novo.');
-    const cookies = await readBrowserCookies(info.exe, { visit: SITES[site].visit });
-    const name = site === 'instagram' ? 'Instagram' : 'YouTube';
-    if (!hasLogin(cookies, site)) throw new Error(`O login do ${name} expirou. Entre de novo.`);
+    const exe = loginInfo()?.exe || findBrowser()?.exe;
+    if (!exe || !fs.existsSync(exe)) throw new Error('O navegador do login não foi encontrado. Entre de novo.');
+    const cookies = await readBrowserCookies(exe, { visit: SITES[site]?.visit || null });
+    if (SITES[site] && !hasLogin(cookies, site)) {
+      throw new Error(`O login do ${site === 'instagram' ? 'Instagram' : 'YouTube'} expirou. Entre de novo.`);
+    }
+    if (!SITES[site] && !hasDomainCookies(cookies, site)) {
+      throw Object.assign(new Error(`Este site exige login. Entre na sua conta de ${site} pelo YTA e tente de novo.`), { loginKind: 'required' });
+    }
     writeCookiesFile(cookies);
     refreshedAt[site] = Date.now();
   });
@@ -721,7 +757,8 @@ function freshCookies(site) {
 }
 
 let loginRun = null;
-function openLogin() {
+/** extraUrl: site de um item que pediu login (abre numa aba a mais, além de YouTube e Instagram). */
+function openLogin(extraUrl) {
   if (loginRun) return loginRun;
   loginRun = (async () => {
     const browser = findBrowser();
@@ -735,6 +772,7 @@ function openLogin() {
         '--no-default-browser-check',
         '--new-window',
         ...LOGIN_URLS,
+        ...(extraUrl && !SITES[siteOf(extraUrl)] ? [new URL(extraUrl).origin] : []),
       ]);
       child.once('exit', resolve);
       child.once('error', resolve);
@@ -743,11 +781,12 @@ function openLogin() {
     await sleep(1000); // o navegador termina de gravar o perfil
     const cookies = await readBrowserCookies(browser.exe);
     const sites = loggedSites(cookies);
-    if (!Object.values(sites).some(Boolean)) return { loggedIn: isLoggedIn(), sites: loginInfo()?.sites || {}, error: 'O login não foi concluído.' };
+    const extraOk = extraUrl && !SITES[siteOf(extraUrl)] && hasDomainCookies(cookies, siteOf(extraUrl));
+    if (!Object.values(sites).some(Boolean) && !extraOk) return { loggedIn: isLoggedIn(), sites: loginInfo()?.sites || {}, error: 'O login não foi concluído.' };
     writeCookiesFile(cookies);
     for (const site of Object.keys(sites)) if (sites[site]) refreshedAt[site] = Date.now();
     fs.writeFileSync(loginInfoFile, JSON.stringify({ browser: browser.name, exe: browser.exe, sites }));
-    return { loggedIn: true, sites, browser: browser.name };
+    return { loggedIn: true, sites, extraOk: Boolean(extraOk), browser: browser.name };
   })()
     .catch((err) => ({ loggedIn: isLoggedIn(), error: err.message }))
     .finally(() => {
@@ -879,7 +918,7 @@ ipcMain.handle('login-status', () => ({
   sites: isLoggedIn() ? loginInfo()?.sites || {} : {},
   browser: loginInfo()?.browser || findBrowser()?.name || null,
 }));
-ipcMain.handle('login', () => openLogin());
+ipcMain.handle('login', (_e, url) => openLogin(url));
 ipcMain.handle('logout', () => logout());
 ipcMain.handle('cancel-job', (_e, id) => cancelJob(id));
 ipcMain.handle('reveal', (_e, file) => shell.showItemInFolder(file));

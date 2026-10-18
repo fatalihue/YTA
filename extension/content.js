@@ -1,10 +1,30 @@
-// Botão "YTA" sobre os vídeos do YouTube e do Instagram (como o do IDM).
+// Botão "YTA" sobre os vídeos de qualquer site (como o do IDM). YouTube e Instagram têm regras
+// próprias para achar o link de cada vídeo; nos outros sites vai o endereço da página (ou do
+// player embutido) e o serviço de fundo junta o arquivo de vídeo que a página tocava.
 // - Clique no corpo: baixa com a última escolha. Setinha: menu com áudio/vídeo/resolução.
 // - O botão mostra o andamento (na fila → baixando % → salvo · abrir pasta).
 // - YTA fechado: abre o app por yta://start (o Chrome pergunta uma vez) e tenta de novo.
 (() => {
   if (window.__ytaButton) return;
   window.__ytaButton = true;
+
+  // Site da aba (dentro de um player embutido, o da página que o contém): é o que "Não mostrar
+  // neste site" guarda.
+  const topHost = (() => {
+    const anc = location.ancestorOrigins;
+    try {
+      return anc && anc.length ? new URL(anc[anc.length - 1]).hostname : location.hostname;
+    } catch {
+      return location.hostname;
+    }
+  })();
+  let blocked = false;
+  chrome.storage.sync.get('hiddenSites').then(({ hiddenSites }) => {
+    blocked = (hiddenSites || []).includes(topHost);
+  });
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.hiddenSites) blocked = (changes.hiddenSites.newValue || []).includes(topHost);
+  });
 
   const MIN_W = 200;
   const MIN_H = 120;
@@ -18,7 +38,8 @@
 
   /* ---------- Qual é o link "deste" vídeo ---------- */
 
-  const isYouTube = /(^|\.)youtube\.com$/.test(location.hostname);
+  const isYouTube = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname);
+  const isInstagram = /(^|\.)instagram\.com$/.test(location.hostname);
 
   function youtubeUrl(video, hits) {
     // Player principal (página do vídeo ou Shorts): o link é o da própria página.
@@ -27,6 +48,9 @@
       if (u.pathname === '/watch' && u.searchParams.get('v')) return `https://www.youtube.com/watch?v=${u.searchParams.get('v')}`;
       const s = u.pathname.match(/^\/shorts\/([\w-]{11})/);
       if (s) return `https://www.youtube.com/shorts/${s[1]}`;
+      // Player do YouTube embutido em outro site.
+      const e = u.pathname.match(/^\/embed\/([\w-]{11})/);
+      if (e) return `https://www.youtube.com/watch?v=${e[1]}`;
     }
     // Prévia na home/busca: o link da miniatura sob o ponteiro.
     const a = hits.map((el) => el.closest?.('a[href*="/watch?v="], a[href*="/shorts/"]')).find(Boolean);
@@ -41,7 +65,9 @@
     return a ? new URL(a.getAttribute('href'), location.origin).href.replace(/\?.*$/, '') : null;
   }
 
-  const urlFor = (video, hits) => (isYouTube ? youtubeUrl(video, hits) : instagramUrl(video));
+  // Outros sites: a página (o yt-dlp reconhece ~1.800 sites e tem um extrator genérico).
+  const urlFor = (video, hits) =>
+    isYouTube ? youtubeUrl(video, hits) : isInstagram ? instagramUrl(video) : location.href.replace(/#.*$/, '');
 
   /* ---------- Interface (Shadow DOM: o CSS do site não vaza para cá) ---------- */
 
@@ -143,7 +169,7 @@
         if (e.composedPath().includes(host)) return; // sobre o próprio botão
         const hits = document.elementsFromPoint(pointer.x, pointer.y);
         const v = hits.find((el) => el.tagName === 'VIDEO') || findVideoBehind(hits);
-        if (!v || hidden.has(v)) {
+        if (!v || hidden.has(v) || blocked) {
           if (!menuOpen()) {
             video = null;
             hide();
@@ -340,6 +366,14 @@
       render();
     });
     menu.append(compat);
+    const sep2 = document.createElement('div');
+    sep2.className = 'sep';
+    menu.append(sep2, item(`Não mostrar em ${topHost.replace(/^www\./, '')}`, false, async () => {
+      const { hiddenSites = [] } = await chrome.storage.sync.get('hiddenSites');
+      await chrome.storage.sync.set({ hiddenSites: [...new Set([...hiddenSites, topHost])] });
+      closeMenu();
+      host.style.display = 'none';
+    }));
   }
 
   arrowBtn.addEventListener('click', () => (menuOpen() ? closeMenu() : openMenu()));

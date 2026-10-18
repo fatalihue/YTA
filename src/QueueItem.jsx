@@ -53,7 +53,9 @@ export function QueueItem({ item, onCancel, onRetry, onRemove, onReveal, onLogin
   const base = PHASE[item.phase];
   // Formato original só troca a embalagem; MP3 (ou fallback sem o codec) converte de fato.
   const phase =
-    item.phase === 'preparing' && item.retry?.login
+    item.phase === 'preparing' && item.retry?.media
+      ? { ...base, text: 'Página não reconhecida; baixando o vídeo que ela tocava…' }
+      : item.phase === 'preparing' && item.retry?.login
       ? { ...base, text: 'O YouTube pediu verificação; tentando com o login…' }
       : item.phase === 'preparing' && item.retry
       ? { ...base, text: `A conexão caiu, retomando (tentativa ${item.retry.attempt} de ${item.retry.max})…` }

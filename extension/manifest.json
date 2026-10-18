@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YTA",
-  "description": "Baixa áudio e vídeo do YouTube e do Instagram com o app YTA.",
-  "version": "1.1.0",
+  "description": "Baixa áudio e vídeo do YouTube, do Instagram e da maioria dos sites com o app YTA.",
+  "version": "1.2.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtxo5RPQGoR27A5GIObHS7Rli8Wi+DGfNiBr/svU2onYZ/MUT/vF6zIlt4+0P+P5uqrUNCpKf7Ly3uTMuCK6NDrb8hiHKCJGVYBz/rI1iGrc7PygRniIvOKeKsnZMZTuzO1Th6j0joChpw/oZlFRPfD3Rj22x0JoprRQCSwLBDRYI1RzrmAOYLcxVMPCmix7yvhJQYK6vKr7LIK7+NVuuHUJQopaeFrG3WsWMsCZaxb5k8yNap5bkqBvrT+SONiWC8SJWS/k291X4F1ItSZU79AtmAgmoBW8QofT9LoNL0MSQpgtgLcogE56ZLMh2sJHnbBdZhhGrxWQjfO5041fUKQIDAQAB",
   "icons": {
     "16": "icons/16.png",
@@ -23,22 +23,28 @@
   },
   "permissions": [
     "storage",
-    "contextMenus"
+    "contextMenus",
+    "webRequest"
   ],
   "host_permissions": [
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://www.youtube.com/*",
-        "https://m.youtube.com/*",
-        "https://www.instagram.com/*"
+        "http://*/*",
+        "https://*/*"
+      ],
+      "exclude_matches": [
+        "http://127.0.0.1/*"
       ],
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ]
 }

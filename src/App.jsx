@@ -26,7 +26,9 @@ const heightLabel = (h) => (h === 4320 ? '8K (4320p)' : h === 2160 ? '4K (2160p)
 const YOUTUBE = /^(https?:\/\/)?((www|m|music)\.)?(youtube\.com|youtu\.be)\/\S+$/i;
 // Instagram: posts, reels, IGTV e stories (stories exigem login).
 const INSTAGRAM = /^(https?:\/\/)?(www\.)?instagram\.com\/(p|reels?|tv|stories)\/\S+$/i;
-const SUPPORTED = (url) => YOUTUBE.test(url) || INSTAGRAM.test(url);
+// Qualquer outro site: o yt-dlp reconhece ~1.800 e tem um extrator genérico para o resto.
+const WEB = /^https?:\/\/[^\s/?#]+\.[^\s/?#]+\S*$/i;
+const SUPPORTED = (url) => YOUTUBE.test(url) || INSTAGRAM.test(url) || WEB.test(url);
 const ACTIVE = ['preparing', 'download', 'convert'];
 // Itens processados ao mesmo tempo: sobrepõe as consultas ao YouTube e usa mais núcleos na conversão.
 const PARALLEL = 3;
@@ -35,8 +37,8 @@ const PARALLEL = 3;
 function videoKey(url) {
   const ig = url.match(/instagram\.com\/(?:p|reels?|tv)\/([\w-]+)/i);
   if (ig) return `ig:${ig[1]}`;
-  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/)([\w-]{11})/);
-  return m ? m[1] : url;
+  const m = YOUTUBE.test(url) && url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/)([\w-]{11})/);
+  return m ? m[1] : url.replace(/#.*$/, '');
 }
 
 function load(key, fallback) {
@@ -95,7 +97,7 @@ export default function App() {
     const offTool = api.onToolStatus(setTool);
     const offJob = api.onJobEvent((e) => {
       if (e.type === 'meta') patch(e.id, { title: e.title, phase: 'download', retry: null });
-      else if (e.type === 'retry') patch(e.id, { phase: 'preparing', progress: {}, retry: e.login ? { login: true } : { attempt: e.attempt, max: e.max } });
+      else if (e.type === 'retry') patch(e.id, { phase: 'preparing', progress: {}, retry: e.login ? { login: true } : e.media ? { media: true } : { attempt: e.attempt, max: e.max } });
       else if (e.type === 'target') patch(e.id, { file: e.file });
       else if (e.type === 'resolution') patch(e.id, { height: e.height });
       else if (e.type === 'progress') {
@@ -128,6 +130,8 @@ export default function App() {
         bitrate: Number(req.bitrate) || s.bitrate,
         maxHeight: fmt === 'video' ? (req.maxHeight === undefined ? s.maxHeight : req.maxHeight) : null,
         compat: fmt === 'video' && (req.compat === undefined ? s.compat : Boolean(req.compat)),
+        // Da extensão: arquivo de vídeo que a página tocava (plano B), a página e o título dela.
+        mediaUrl: req.mediaUrl || null, referer: req.referer || null, pageTitle: req.title || null,
         phase: 'queued', title: null, progress: {},
       };
       itemsRef.current = [...itemsRef.current, item];
@@ -174,8 +178,8 @@ export default function App() {
     for (const item of next) {
       running.current.add(item.id);
       patch(item.id, { phase: 'preparing', progress: {}, error: null, retry: null });
-      const { id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264 } = item;
-      api.run({ id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264 }).then((r) => {
+      const { id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle } = item;
+      api.run({ id, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, title: pageTitle }).then((r) => {
         running.current.delete(item.id);
         if (r.ok) patch(item.id, { phase: 'done', file: r.file, files: r.files || [r.file], retry: null });
         else if (r.cancelled) patch(item.id, { phase: 'cancelled', retry: null });
@@ -212,7 +216,7 @@ export default function App() {
     e?.preventDefault();
     const lines = links.split(/\s+/).map((l) => l.trim()).filter(Boolean);
     if (!lines.length) {
-      setLinksError('Cole ao menos um link do YouTube ou do Instagram.');
+      setLinksError('Cole ao menos um link.');
       return;
     }
     const valid = [];
@@ -241,8 +245,8 @@ export default function App() {
     // O que não deu para enfileirar fica no campo, para corrigir.
     setLinks(invalid.join('\n'));
     setLinksError(
-      invalid.length === 1 ? 'Esta linha não é um link do YouTube ou do Instagram.'
-      : invalid.length > 1 ? `${invalid.length} linhas não são links do YouTube ou do Instagram.`
+      invalid.length === 1 ? 'Esta linha não é um link (comece com https://).'
+      : invalid.length > 1 ? `${invalid.length} linhas não são links (comece com https://).`
       : '',
     );
     setNotice(repeated === 1 ? '1 link já estava na fila.' : repeated > 1 ? `${repeated} links já estavam na fila.` : '');
@@ -254,12 +258,13 @@ export default function App() {
   }
   const retry = (item) => patch(item.id, { phase: 'queued', progress: {}, error: null, needsLogin: false });
 
-  async function login() {
+  /** url: site de um item que pediu login (abre numa aba a mais na janela de login). */
+  async function login(url) {
     setLoginState((s) => ({ ...s, error: '' }));
-    const r = await api.login();
+    const r = await api.login(url);
     setLoggedIn(r.loggedIn);
     setLoginState((s) => ({ ...s, browser: r.browser || s.browser, sites: r.sites || s.sites, error: r.error || '' }));
-    return r.loggedIn;
+    return r;
   }
   async function logout() {
     const r = await api.logout();
@@ -268,7 +273,9 @@ export default function App() {
   }
   // Item recusado por falta de login: entra e, se deu certo, tenta de novo.
   async function loginAndRetry(item) {
-    if (loggedIn || (await login())) retry(item);
+    const known = YOUTUBE.test(item.url) || INSTAGRAM.test(item.url);
+    const r = await login(item.url);
+    if (r.extraOk || (known && r.loggedIn)) retry(item);
   }
   const remove = (item) => setItems((list) => list.filter((it) => it.id !== item.id));
   const clearFinished = () => setItems((list) => list.filter((it) => it.phase === 'queued' || ACTIVE.includes(it.phase)));
@@ -280,7 +287,7 @@ export default function App() {
   return (
     <main className="flex h-full flex-col bg-bg-base">
       <form onSubmit={enqueue} className="flex shrink-0 flex-col gap-3 p-6 pb-4" noValidate>
-        <Field label="Links do YouTube ou Instagram" hint={notice || 'Um por linha. Ctrl+Enter adiciona.'} error={linksError}>
+        <Field label="Links de vídeo" hint={notice || 'YouTube, Instagram e a maioria dos sites. Um por linha; Ctrl+Enter adiciona.'} error={linksError}>
           {({ id, describedBy, invalid }) => (
             <textarea
               id={id}
@@ -373,7 +380,7 @@ export default function App() {
           {tool.state === 'installing' || tool.state === 'error' ? (
             <ToolNotice tool={tool} />
           ) : (
-            <LoginControl loggedIn={loggedIn} login={loginState} onLogin={login} onLogout={logout} />
+            <LoginControl loggedIn={loggedIn} login={loginState} onLogin={() => login()} onLogout={logout} />
           )}
           <Button type="submit" variant="primary" disabled={!folder || tool.state === 'error'} className="shrink-0">
             <Download size={16} aria-hidden />
@@ -480,7 +487,7 @@ function LoginControl({ loggedIn, login, onLogin, onLogout }) {
     return (
       <div className="mr-auto flex min-w-0 items-center gap-2">
         <Button variant="ghost" className="shrink-0" onClick={onLogin}>
-          Entrar no YouTube/Instagram…
+          Entrar em sites…
         </Button>
         {login.error && (
           <p className="truncate text-minor text-danger-fg" role="alert">
