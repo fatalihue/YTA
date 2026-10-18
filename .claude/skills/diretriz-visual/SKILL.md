@@ -232,6 +232,7 @@ Herdadas do TrueReplayer como ponto de partida — confirmar ou trocar no iníci
 | Fila × Baixados | abas no cabeçalho da lista (label-micro, ativa com sublinhado de 2 px no accent); histórico de 1.000, a lista mostra 300; "Limpar histórico" pede segundo clique | decidida 18-10-2026 |
 | Avisos na linha de ajuda dos links | ações em forma de link (LinkButton) na mesma linha, para o formulário não mudar de altura: "já baixado · Baixar de novo", "playlist · Só o vídeo / A playlist inteira", "Link copiado · Colar" | decidida 18-10-2026 |
 | Pastas | uma para áudio e outra para vídeo (Música/Vídeos); a linha mostra a do formato | decidida 18-10-2026 |
+| Pausar/Retomar tudo | botões no cabeçalho da fila, só quando servem (há o que pausar / há pausados); pausar guarda os pedaços; item pausado mostra "continua de onde parou", sem percentual (o da pausa cairia ao retomar) | decidida 18-10-2026 |
 | Queda de conexão | retomada automática: até 3 tentativas (3 s e 8 s de espera), continuando do ponto onde parou; vídeo privado/indisponível não tenta de novo | decidida 17-10-2026 |
 | Formato | M4A (padrão) · Opus · MP3. M4A e Opus copiam o fluxo original do YouTube, sem conversão; o dono ouve em todo lugar e quis as três opções | decidida 17-10-2026 |
 | Qualidade do MP3 | só aparece com MP3; padrão 256 kbps para compensar a perda da conversão Opus→MP3 (substitui o padrão 192) | decidida 17-10-2026 |

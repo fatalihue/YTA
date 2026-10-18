@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Download, FolderOpen, Loader2, Puzzle } from 'lucide-react';
+import { AlertCircle, Download, FolderOpen, Loader2, Pause, Play, Puzzle } from 'lucide-react';
 import { Button, Field, IconButton, LinkButton, SegmentedControl } from './ui.jsx';
 import { QueueItem } from './QueueItem.jsx';
 import { HistoryItem } from './HistoryItem.jsx';
@@ -31,7 +31,7 @@ const INSTAGRAM = /^(https?:\/\/)?(www\.)?instagram\.com\/(p|reels?|tv|stories)\
 const WEB = /^https?:\/\/[^\s/?#]+\.[^\s/?#]+\S*$/i;
 const SUPPORTED = (url) => YOUTUBE.test(url) || INSTAGRAM.test(url) || WEB.test(url);
 const ACTIVE = ['preparing', 'download', 'convert'];
-const PENDING = ['queued', 'listing', ...ACTIVE]; // ainda vai baixar (é o que a fila salva guarda)
+const PENDING = ['queued', 'listing', 'paused', ...ACTIVE]; // ainda vai baixar (é o que a fila salva guarda)
 // Itens processados ao mesmo tempo: sobrepõe as consultas ao YouTube e usa mais núcleos na conversão.
 const PARALLEL = 3;
 const HISTORY_SHOWN = 300; // o histórico guarda 1.000; a lista mostra os mais recentes
@@ -114,6 +114,7 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
   const running = useRef(new Set()); // ids em andamento
   const listing = useRef(new Set()); // playlists sendo lidas
+  const pausing = useRef(new Set()); // em andamento que pedimos para pausar (o resultado volta como cancelado)
   const textareaRef = useRef(null);
   const lastClip = useRef(''); // texto da área de transferência já oferecido (não oferece de novo)
   // Valores atuais para assinantes criados uma vez só (extensão, arrastar, área de transferência).
@@ -212,7 +213,7 @@ export default function App() {
     api.queueLoad().then((saved) => {
       const restored = (saved || [])
         .filter((it) => it && it.url && it.uid)
-        .map((it) => ({ ...it, id: nextId++, phase: it.kind === 'playlist' ? 'listing' : 'queued', progress: {}, error: null, retry: null }));
+        .map((it) => ({ ...it, id: nextId++, phase: it.paused ? 'paused' : it.kind === 'playlist' ? 'listing' : 'queued', progress: {}, error: null, retry: null }));
       if (restored.length) setItems((list) => [...restored, ...list]);
     });
     api.rendererReady();
@@ -261,8 +262,9 @@ export default function App() {
       );
       const pending = list
         .filter((it) => PENDING.includes(it.phase))
-        .map(({ uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title }) => ({
+        .map(({ uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title, phase }) => ({
           uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title,
+          paused: phase === 'paused',
         }));
       const json = JSON.stringify(pending);
       if (json !== savedQueue.current) {
@@ -293,9 +295,12 @@ export default function App() {
         .catch((err) => ({ ok: false, error: `Erro interno do YTA: ${err?.message || err}` }))
         .then((r) => {
           running.current.delete(item.id);
+          const wasPausing = pausing.current.has(item.id);
           if (r.ok) patch(item.id, { phase: 'done', file: r.file, files: r.files || [r.file], retry: null });
+          else if (r.cancelled && wasPausing) patch(item.id, { phase: 'paused', pausing: false, retry: null });
           else if (r.cancelled) patch(item.id, { phase: 'cancelled', retry: null });
           else patch(item.id, { phase: 'error', error: r.error, needsLogin: Boolean(r.needsLogin), retry: null });
+          pausing.current.delete(item.id);
         });
     }
   }, [items, tool.state]);
@@ -513,8 +518,26 @@ export default function App() {
     textareaRef.current?.focus();
   }
 
+  /** Pausar tudo: o que espera fica pausado; o que está baixando para e guarda os pedaços. */
+  function pauseAll() {
+    for (const it of itemsRef.current) {
+      if (ACTIVE.includes(it.phase) && !pausing.current.has(it.id)) {
+        pausing.current.add(it.id);
+        api.pause(it.id);
+      }
+    }
+    setItems((list) =>
+      list.map((it) =>
+        it.phase === 'queued' ? { ...it, phase: 'paused' } : ACTIVE.includes(it.phase) ? { ...it, pausing: true } : it,
+      ),
+    );
+  }
+  /** Retomar: volta para a fila na mesma ordem e continua dos pedaços já baixados. */
+  const resumeAll = () => setItems((list) => list.map((it) => (it.phase === 'paused' ? { ...it, phase: 'queued' } : it)));
+  const resume = (item) => patch(item.id, { phase: 'queued' });
+
   function cancel(item) {
-    if (item.phase === 'queued' || item.phase === 'listing') {
+    if (item.phase === 'queued' || item.phase === 'listing' || item.phase === 'paused') {
       setItems((list) => list.filter((it) => it.id !== item.id));
       if (item.uid) api.discardWork(item.uid); // pedaços de um item restaurado (retomaria deles)
     } else api.cancel(item.id);
@@ -545,6 +568,8 @@ export default function App() {
   const clearFinished = () => setItems((list) => list.filter((it) => PENDING.includes(it.phase)));
 
   const finished = items.filter((it) => ['done', 'error', 'cancelled'].includes(it.phase)).length;
+  const canPause = items.some((it) => it.phase === 'queued' || (ACTIVE.includes(it.phase) && !it.pausing));
+  const canResume = items.some((it) => it.phase === 'paused');
   const done = items.filter((it) => it.phase === 'done').length;
   const noun = format === 'video' ? ['vídeo', 'vídeos'] : ['áudio', 'áudios'];
 
@@ -698,6 +723,18 @@ export default function App() {
           <IconButton label="Extensão do navegador" onClick={() => api.extensionHelp()}>
             <Puzzle size={16} aria-hidden />
           </IconButton>
+          {view === 'queue' && canResume && (
+            <Button variant="ghost" className="h-7 shrink-0" onClick={resumeAll}>
+              <Play size={14} aria-hidden />
+              Retomar tudo
+            </Button>
+          )}
+          {view === 'queue' && canPause && (
+            <Button variant="ghost" className="h-7 shrink-0" onClick={pauseAll}>
+              <Pause size={14} aria-hidden />
+              Pausar tudo
+            </Button>
+          )}
           {view === 'queue' ? (
             <Button variant="ghost" className="h-7 shrink-0" disabled={!finished} onClick={clearFinished}>
               Limpar concluídos
@@ -738,6 +775,7 @@ export default function App() {
                   onRemove={() => remove(item)}
                   onReveal={() => api.reveal(item.file)}
                   onLogin={() => loginAndRetry(item)}
+                  onResume={() => resume(item)}
                 />
               ))}
             </ul>

@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, CircleSlash, Clock, FolderOpen, Loader2, RotateCw, Trash2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleSlash, Clock, FolderOpen, Loader2, Pause, Play, RotateCw, Trash2, X } from 'lucide-react';
 import { memo } from 'react';
 import { Button, IconButton } from './ui.jsx';
 
@@ -18,9 +18,12 @@ function duration(s) {
   return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
 }
 
+const ACTIVE_PHASES = ['preparing', 'download', 'convert'];
+
 const PHASE = {
   queued: { icon: Clock, text: 'Na fila', tone: 'text-text-tertiary' },
   listing: { icon: Loader2, text: 'Lendo a playlist…', tone: 'text-text-tertiary', spin: true },
+  paused: { icon: Pause, text: 'Pausado', tone: 'text-text-tertiary' },
   preparing: { icon: Loader2, text: 'Buscando o vídeo…', tone: 'text-text-tertiary', spin: true },
   download: { icon: Loader2, text: 'Baixando', tone: 'text-accent', spin: true },
   convert: { icon: Loader2, text: 'Convertendo', tone: 'text-accent', spin: true },
@@ -40,6 +43,9 @@ function details(item) {
     if (p.eta !== null && p.eta !== undefined && p.percent < 100) parts.push(`${duration(p.eta)} restante`);
     return parts;
   }
+  // Pausado: sem percentual. Com 8 pedaços em paralelo, os que estavam pela metade são baixados de
+  // novo ao retomar, então o número da pausa cairia — parecendo retrocesso.
+  if (item.phase === 'paused') return ['continua de onde parou'];
   if (item.phase === 'convert') {
     const parts = [];
     if (p.percent !== null && p.percent !== undefined) parts.push(`${Math.floor(p.percent)}%`);
@@ -55,11 +61,13 @@ function details(item) {
 // igual, o item antigo e os callbacks antigos fazem a mesma coisa.
 export const QueueItem = memo(QueueItemView, (a, b) => a.item === b.item);
 
-function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin }) {
+function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin, onResume }) {
   const base = PHASE[item.phase];
   // Formato original só troca a embalagem; MP3 (ou fallback sem o codec) converte de fato.
   const phase =
-    item.phase === 'preparing' && item.retry?.media
+    ACTIVE_PHASES.includes(item.phase) && item.pausing
+      ? { ...base, text: 'Pausando…' }
+      : item.phase === 'preparing' && item.retry?.media
       ? { ...base, text: 'Página não reconhecida; baixando o vídeo que ela tocava…' }
       : item.phase === 'preparing' && item.retry?.login
       ? { ...base, text: 'O site pediu login; tentando com a sua conta…' }
@@ -167,7 +175,12 @@ function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin })
             </IconButton>
           </>
         )}
-        {(item.phase === 'queued' || item.phase === 'listing') && (
+        {item.phase === 'paused' && (
+          <IconButton label="Retomar" onClick={onResume}>
+            <Play size={16} aria-hidden />
+          </IconButton>
+        )}
+        {(item.phase === 'queued' || item.phase === 'listing' || item.phase === 'paused') && (
           <IconButton label="Tirar da fila" onClick={onCancel}>
             <X size={16} aria-hidden />
           </IconButton>

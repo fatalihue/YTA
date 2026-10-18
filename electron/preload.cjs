@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('yta', {
   login: (url) => ipcRenderer.invoke('login', url),
   logout: () => ipcRenderer.invoke('logout'),
   cancel: (id) => ipcRenderer.invoke('cancel-job', id),
+  pause: (id) => ipcRenderer.invoke('pause-job', id),
   reveal: (file) => ipcRenderer.invoke('reveal', file),
   retryTool: () => ipcRenderer.invoke('retry-tool'),
   toolStatus: () => ipcRenderer.invoke('tool-status'),

@@ -82,6 +82,9 @@ os apps instalados leem para se atualizar. Sem notas, o GitHub gera a partir dos
   Baixando a mesma playlist de novo, só os vídeos novos entram (os já baixados são pulados).
 - **Baixados:** a aba ao lado da fila guarda os últimos 1.000 downloads (abrir a pasta, baixar de
   novo, tirar do histórico). Colar um link já baixado no mesmo formato avisa e oferece "Baixar de novo".
+- **Pausar tudo / Retomar tudo** (cabeçalho da fila): pausar para os downloads guardando o que já
+  veio; retomar continua daí (cada item pausado também tem o seu "Retomar"). Pausados continuam
+  pausados ao reabrir o app.
 - **A fila sobrevive ao fechar:** o que estava na fila ou baixando volta ao reabrir, e um download
   interrompido continua de onde parou.
 - **Capa:** M4A e MP3 saem com a miniatura do vídeo como capa (o Opus não guarda capa).

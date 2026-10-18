@@ -57,3 +57,16 @@ foco, tipografia ou fazer codemod.
 17. **Mapa automático superestima dívida.** Contagens por grep incluem comentários e casos
     deliberados (três `Section` com papéis diferentes, um invólucro fino que parece duplicata).
     Confirmar no código antes de "consolidar".
+
+## Electron (YTA, out/2026)
+
+18. **Electron 44: `clipboard.readText()` devolve uma Promise.** Código síncrono antigo
+    (`readText().slice()`) quebra com "is not a function". Conferir APIs que mudaram de síncronas
+    para assíncronas a cada atualização grande do Electron.
+19. **`will-navigate` com `preventDefault()` também bloqueia `location.reload()`.** Proteger a
+    janela contra navegação (links/arquivos soltos) quebra testes que recarregam a página para
+    aplicar o localStorage: gravar, fechar o app (`window.close()`) e reabrir.
+20. **Promessa vinda do `contextBridge` não é "esperada" pelo CDP** (`Runtime.evaluate` com
+    `awaitPromise` devolve `{}`). Nos testes, encadear `.then(String, e => 'ERRO ' + e.message)`.
+21. **Teste que baixa de verdade precisa de trava de pasta**: conferir que o destino é o do teste
+    antes do primeiro download (uma corrida já mandou arquivos de teste para a pasta Música).

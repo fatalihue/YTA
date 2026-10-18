@@ -217,6 +217,8 @@
       launching: '<span class="spin"></span> Abrindo o YTA…',
       sending: '<span class="spin"></span> Enviando…',
       queued: '<span class="muted">Na fila do YTA</span>',
+      paused: '<span class="muted">Pausado no YTA</span>',
+      listing: '<span class="spin"></span> Lendo a playlist…',
       preparing: '<span class="spin"></span> Buscando…',
       download: `<span class="spin"></span> Baixando${job.part === 'audio' ? ' áudio' : ''}${pct}`,
       convert: `<span class="spin"></span> ${job.copy === false ? 'Convertendo' : 'Finalizando'}${pct}`,

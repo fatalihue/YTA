@@ -1,7 +1,7 @@
 {
   "name": "yta",
   "productName": "YTA",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Baixa áudio (M4A, Opus, MP3) ou vídeo (MP4) do YouTube.",
   "main": "electron/main.cjs",
   "private": true,

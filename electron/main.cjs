@@ -1069,6 +1069,13 @@ ipcMain.handle('login-status', () => ({
 ipcMain.handle('login', (_e, url) => openLogin(url));
 ipcMain.handle('logout', () => logout());
 ipcMain.handle('cancel-job', (_e, id) => cancelJob(id));
+// Pausar: para como o cancelar, mas guarda os pedaços (a pasta de trabalho do item) para retomar.
+ipcMain.handle('pause-job', (_e, id) => {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.keepPartial = true;
+  cancelJob(id);
+});
 ipcMain.handle('reveal', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('retry-tool', () => prepareTool().then(() => true, () => false));
 ipcMain.handle('history-list', () => listHistory());
