@@ -195,6 +195,7 @@ function startServer() {
     const url = new URL(req.url, 'http://127.0.0.1');
     try {
       if (req.method === 'GET' && url.pathname === '/ping') {
+        ensureExtensionSynced(); // a extensão recarrega ao ver a versão nova; a pasta tem de estar nela
         return send(res, { app: 'YTA', version: app.getVersion() });
       }
       if (req.method === 'POST' && url.pathname === '/enqueue') {
@@ -278,6 +279,24 @@ function syncExtension() {
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
 }
 
+/** Logo depois de um update o instalador pode abrir o app antes de gravar resourcesextension:
+ * a cópia é tentada de novo depois e sempre que a extensão chama, até a pasta estar na versão. */
+function extensionVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(extensionDir(), 'manifest.json'), 'utf8')).version;
+  } catch {
+    return null;
+  }
+}
+function ensureExtensionSynced() {
+  if (extensionVersion() === app.getVersion()) return;
+  try {
+    syncExtension();
+  } catch (err) {
+    console.warn('[bridge] syncExtension:', err.message);
+  }
+}
+
 async function showExtensionHelp() {
   const dir = extensionDir();
   clipboard.writeText(dir);
@@ -317,6 +336,7 @@ function init(context) {
       console.warn(`[bridge] ${step.name}:`, err.message);
     }
   }
+  setTimeout(ensureExtensionSynced, 15_000);
   const link = process.argv.find((a) => a.startsWith(`${PROTOCOL}://`));
   if (link) handleProtocol(link);
 }
