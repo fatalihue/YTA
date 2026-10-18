@@ -31,4 +31,16 @@ contextBridge.exposeInMainWorld('yta', {
   reportItems: (list) => ipcRenderer.send('items-state', list),
   rendererReady: () => ipcRenderer.send('renderer-ready'),
   extensionHelp: () => ipcRenderer.invoke('extension-help'),
+  // Histórico, fila salva, playlists, área de transferência, pastas padrão.
+  historyList: () => ipcRenderer.invoke('history-list'),
+  historyCheck: (keys) => ipcRenderer.invoke('history-check', keys),
+  historyRemove: (uid) => ipcRenderer.invoke('history-remove', uid),
+  historyClear: () => ipcRenderer.invoke('history-clear'),
+  onHistoryChanged: (cb) => subscribe('history-changed', cb),
+  queueLoad: () => ipcRenderer.invoke('queue-load'),
+  discardWork: (uid) => ipcRenderer.invoke('discard-work', uid),
+  queueSave: (list) => ipcRenderer.send('queue-save', list),
+  expandPlaylist: (url, folder) => ipcRenderer.invoke('playlist-expand', url, folder),
+  clipboardText: () => ipcRenderer.invoke('clipboard-text'),
+  specialFolders: () => ipcRenderer.invoke('special-folders'),
 });

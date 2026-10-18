@@ -229,6 +229,9 @@ Herdadas do TrueReplayer como ponto de partida — confirmar ou trocar no iníci
 | Extensão do navegador | botão dividido sobre o vídeo (corpo = última escolha, setinha = menu), andamento no próprio botão; fala com o app por 127.0.0.1 (cabeçalho X-YTA + origem da extensão) e abre o app por yta://start; modo desenvolvedor, pasta fixa em %APPDATA%\yta\extension que o app atualiza | decidida 17-10-2026 |
 | Bandeja | fechar a janela esconde (app segue na bandeja); pedido da extensão não rouba o foco, só notifica | decidida 17-10-2026 |
 | Outros sites | genérico, não lista: qualquer link http(s); o yt-dlp (~1.800 sites + extrator genérico) decide; plano B = arquivo .m3u8/.mpd/.mp4 que a extensão viu a página tocar, com o título da página; login de qualquer site pelo perfil do Chrome do YTA; botão da extensão em todos os sites com "Não mostrar em …" | decidida 18-10-2026 |
+| Fila × Baixados | abas no cabeçalho da lista (label-micro, ativa com sublinhado de 2 px no accent); histórico de 1.000, a lista mostra 300; "Limpar histórico" pede segundo clique | decidida 18-10-2026 |
+| Avisos na linha de ajuda dos links | ações em forma de link (LinkButton) na mesma linha, para o formulário não mudar de altura: "já baixado · Baixar de novo", "playlist · Só o vídeo / A playlist inteira", "Link copiado · Colar" | decidida 18-10-2026 |
+| Pastas | uma para áudio e outra para vídeo (Música/Vídeos); a linha mostra a do formato | decidida 18-10-2026 |
 | Queda de conexão | retomada automática: até 3 tentativas (3 s e 8 s de espera), continuando do ponto onde parou; vídeo privado/indisponível não tenta de novo | decidida 17-10-2026 |
 | Formato | M4A (padrão) · Opus · MP3. M4A e Opus copiam o fluxo original do YouTube, sem conversão; o dono ouve em todo lugar e quis as três opções | decidida 17-10-2026 |
 | Qualidade do MP3 | só aparece com MP3; padrão 256 kbps para compensar a perda da conversão Opus→MP3 (substitui o padrão 192) | decidida 17-10-2026 |

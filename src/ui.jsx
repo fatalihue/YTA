@@ -12,6 +12,8 @@ const buttonVariants = {
   secondary:
     'bg-bg-card text-text-primary border border-border-default hover:enabled:bg-bg-elevated hover:enabled:border-border-strong disabled:text-text-disabled',
   ghost: 'text-text-secondary hover:enabled:bg-wash-hover hover:enabled:text-text-primary disabled:text-text-disabled',
+  // Ação destrutiva em texto (ex.: confirmar uma limpeza): o vermelho só no rótulo.
+  destructiveText: 'text-danger-fg hover:enabled:bg-wash-hover disabled:text-text-disabled',
 };
 
 export function Button({ variant = 'secondary', className = '', type = 'button', ...props }) {
@@ -154,5 +156,16 @@ export function SegmentedControl({ options, value, onChange, labelId, disabled }
         );
       })}
     </div>
+  );
+}
+
+/** Ação em forma de link dentro de uma linha de texto (não aumenta a altura da linha). */
+export function LinkButton({ className = '', ...props }) {
+  return (
+    <button
+      type="button"
+      className={`shrink-0 rounded-sm font-medium text-accent hover:underline ${className}`}
+      {...props}
+    />
   );
 }

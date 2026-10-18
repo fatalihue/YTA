@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, execFile } = require('node:child_process');
@@ -236,6 +236,8 @@ function videoSelect(maxHeight) {
 /** Etapa 1: yt-dlp baixa o(s) fluxo(s) para uma pasta de trabalho. */
 function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, referer) {
   const video = format === 'video';
+  // Capa: o Opus (Ogg) não guarda imagem pelo ffmpeg, então só M4A e MP3 pedem a miniatura.
+  const cover = format === 'm4a' || format === 'mp3';
   const args = [
     ...jsRuntimeArgs,
     ...(withLogin ? ['--cookies', cookiesFile] : []),
@@ -260,6 +262,9 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
       : ['-f', FORMATS[format].select]),
     '--ffmpeg-location', ffmpegPath,
     '-o', path.join(workDir, '%(id)s.%(format_id)s.%(ext)s'),
+    ...(cover
+      ? ['--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', `thumbnail:${path.join(workDir, '%(id)s.thumb.%(ext)s')}`]
+      : []),
     '--progress-template',
     'download:YTA_PROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s',
     '--print', 'before_dl:YTA_META %(.{id,extractor,title,description,uploader,channel,artist,duration,upload_date,webpage_url,acodec,vcodec,height,filesize,filesize_approx})j',
@@ -449,7 +454,7 @@ function pickH264Encoder() {
   return h264Encoder;
 }
 
-async function plan(format, bitrate, streams, meta, compat) {
+async function plan(format, bitrate, streams, meta, compat, cover) {
   const duration = num(meta.duration);
   if (format === 'video') {
     const v = streams.find((s) => s.hasVideo) || streams[0];
@@ -484,21 +489,40 @@ async function plan(format, bitrate, streams, meta, compat) {
   const src = streams[0];
   const copy = spec.original(src.acodec);
   const codec = copy ? ['-c:a', 'copy'] : typeof spec.encode === 'function' ? spec.encode(bitrate) : spec.encode;
+  // Com capa: áudio + imagem (marcada como capa do álbum); sem ela, só o áudio.
+  const coverArgs = !cover
+    ? []
+    : format === 'mp3'
+      ? ['-c:v', 'copy', '-metadata:s:v', 'title=Album cover', '-metadata:s:v', 'comment=Cover (front)']
+      : ['-c:v', 'copy', '-disposition:v:0', 'attached_pic'];
   return {
-    inputs: [src.file],
-    output: ['-vn', '-map_metadata', '-1', ...tagArgs(meta), ...codec, ...spec.muxer],
+    inputs: cover ? [src.file, cover] : [src.file],
+    output: [
+      ...(cover ? ['-map', '0:a:0', '-map', '1:0'] : ['-vn']),
+      '-map_metadata', '-1', ...tagArgs(meta), ...codec, ...coverArgs, ...spec.muxer,
+    ],
     duration,
     copy,
     label: format.toUpperCase(),
   };
 }
 
-async function runJob({ id, url, folder, format, bitrate, maxHeight, compat, mediaUrl, referer, title }) {
+/** Miniatura baixada para este item (só existe nos formatos com capa e quando o site tem uma). */
+function coverFor(workDir, meta) {
+  const file = path.join(workDir, `${meta.id}.thumb.jpg`);
+  return fs.existsSync(file) ? file : null;
+}
+
+async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxHeight, compat, mediaUrl, referer, title }) {
   if (jobs.has(id)) return { ok: false, error: 'Esse item já está em andamento.' };
   if (format !== 'video' && !FORMATS[format]) return { ok: false, error: `Formato desconhecido: ${format}.` };
-  const job = { child: null, cancelled: false };
+  const job = { child: null, cancelled: false, keepPartial: false, uid };
   jobs.set(id, job);
-  const workDir = path.join(workRoot, `${id}-${Date.now().toString(36)}`);
+  // Pasta de trabalho do item (uid estável): um download interrompido ao fechar o app continua de
+  // onde parou quando a fila volta. A limpeza é aguardada antes de responder, então um "Tentar de
+  // novo" nunca começa enquanto a pasta da execução anterior está sendo apagada.
+  const safeUid = /^[\w-]{4,64}$/.test(uid || '') ? uid : `${id}-${Date.now().toString(36)}`;
+  const workDir = path.join(workRoot, safeUid);
   let out = null;
   try {
     if (!toolReady) prepareTool();
@@ -546,14 +570,15 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat, med
       // Arquivo direto (ex.: master.m3u8) não tem título: usa o da página.
       if (usedMedia && title) Object.assign(meta, { title, extractor: 'generic' });
       if (job.cancelled) throw new Cancelled();
-      out = uniqueFile(folder, safeName(fileTitle(meta)), ext);
+      out = uniqueFile(folder, safeName(`${prefix || ''}${fileTitle(meta)}`), ext);
       reserved.add(out.toLowerCase());
       send('job-event', { id, type: 'target', file: out });
-      await finish(job, id, await plan(format, bitrate, streams, meta, Boolean(compat)), out);
+      await finish(job, id, await plan(format, bitrate, streams, meta, Boolean(compat), coverFor(workDir, meta)), out);
       reserved.delete(out.toLowerCase());
       files.push(out);
       out = null;
     }
+    addHistory({ uid: safeUid, key, url, title: fetched.entries[0] ? fileTitle(fetched.entries[0].meta) : title || null, format, files });
     return { ok: true, file: files[0], files };
   } catch (err) {
     if (out) fs.rmSync(`${out}.part`, { force: true });
@@ -562,10 +587,119 @@ async function runJob({ id, url, folder, format, bitrate, maxHeight, compat, med
     return { ok: false, error: err.message, needsLogin: err.loginKind === 'required' };
   } finally {
     if (out) reserved.delete(out.toLowerCase());
-    jobs.delete(id);
+    // Ao sair do app no meio do download, os pedaços ficam para a fila retomar ao reabrir.
     // taskkill solta os arquivos de forma assíncrona; tenta de novo por alguns instantes.
-    fs.rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }, () => {});
+    if (!job.keepPartial) {
+      await fs.promises.rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => {});
+    }
+    jobs.delete(id);
   }
+}
+
+/* ---------- Histórico (o que já foi baixado) ---------- */
+const historyFile = path.join(app.getPath('userData'), 'history.json');
+const HISTORY_MAX = 1000;
+let history = null;
+let historyTimer = null;
+function loadHistory() {
+  if (history) return history;
+  try {
+    history = JSON.parse(fs.readFileSync(historyFile, 'utf8'));
+    if (!Array.isArray(history)) history = [];
+  } catch {
+    history = [];
+  }
+  return history;
+}
+/** Gravação agrupada e fora da thread principal (vários itens terminam juntos). */
+function saveHistory() {
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(() => {
+    historyTimer = null;
+    fs.promises.writeFile(historyFile, JSON.stringify(history)).catch(() => {});
+  }, 500);
+}
+function addHistory(entry) {
+  const list = loadHistory();
+  list.unshift({ ...entry, at: Date.now() });
+  if (list.length > HISTORY_MAX) list.length = HISTORY_MAX;
+  saveHistory();
+  send('history-changed');
+}
+/** Lista com "o arquivo ainda existe?" (o histórico guarda caminhos; arquivos podem ter sido apagados). */
+function listHistory() {
+  return loadHistory().map((h) => ({ ...h, exists: (h.files || []).some((f) => fs.existsSync(f)) }));
+}
+/** Quais destas chaves já foram baixadas (com arquivo ainda no disco). */
+function checkHistory(keys) {
+  const wanted = new Set(keys);
+  const found = {};
+  for (const h of loadHistory()) {
+    if (!wanted.has(h.key) || found[h.key]) continue;
+    if ((h.files || []).some((f) => fs.existsSync(f))) found[h.key] = { at: h.at, title: h.title };
+  }
+  return found;
+}
+
+/* ---------- Fila persistente (volta ao reabrir o app) ---------- */
+const queueFile = path.join(app.getPath('userData'), 'queue.json');
+let queuePending = null;
+let queueTimer = null;
+let queueFrozen = false; // saindo: os itens interrompidos viram "cancelado", e isso não pode ir para o disco
+function saveQueue(list) {
+  if (queueFrozen) return;
+  queuePending = list;
+  if (queueTimer) return;
+  queueTimer = setTimeout(() => {
+    queueTimer = null;
+    const data = JSON.stringify(queuePending);
+    queuePending = null;
+    fs.promises.writeFile(queueFile, data).catch(() => {});
+  }, 500);
+}
+function flushQueue() {
+  if (!queuePending) return;
+  clearTimeout(queueTimer);
+  queueTimer = null;
+  try {
+    fs.writeFileSync(queueFile, JSON.stringify(queuePending));
+  } catch {}
+  queuePending = null;
+}
+function loadQueue() {
+  try {
+    const list = JSON.parse(fs.readFileSync(queueFile, 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- Playlists: só a lista (rápido), sem consultar cada vídeo ---------- */
+const PLAYLIST_MAX = 1000;
+function expandPlaylist(url, folder) {
+  return (async () => {
+    if (!toolReady) prepareTool();
+    await toolReady;
+    const json = await new Promise((resolve, reject) => {
+      execFile(
+        ytdlpPath,
+        [...jsRuntimeArgs, '--flat-playlist', '--yes-playlist', '--no-warnings', '--encoding', 'utf-8', '-J', url],
+        { windowsHide: true, maxBuffer: 256 * 1024 * 1024, timeout: 120_000, env: ytdlpEnv },
+        (err, stdout, stderr) => (err ? reject(new Error(friendlyError(stderr || err.message))) : resolve(stdout)),
+      );
+    });
+    const info = JSON.parse(json);
+    const entries = (info.entries || [])
+      .map((e) => ({ url: [e.url, e.webpage_url].find((u) => /^https?:\/\//.test(u || '')), title: e.title || null }))
+      .filter((e) => e.url)
+      .slice(0, PLAYLIST_MAX);
+    if (!entries.length) throw new Error('A playlist está vazia ou é privada.');
+    if (!fs.existsSync(folder)) throw new Error('A pasta de destino não existe mais.');
+    const sub = path.join(folder, safeName(info.title || 'Playlist'));
+    fs.mkdirSync(sub, { recursive: true });
+    return { ok: true, title: info.title || 'Playlist', folder: sub, entries, total: (info.entries || []).length };
+  })().catch((err) => ({ ok: false, error: err.message }));
 }
 
 /** Resoluções que o vídeo tem agora (consulta de ~3 s; guardada por vídeo durante a sessão). */
@@ -890,6 +1024,8 @@ function createWindow() {
     if (!hidden) win.show();
   });
   bridge.hideOnClose(win);
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.webContents.once('did-finish-load', () => {
     prepareTool();
@@ -935,19 +1071,56 @@ ipcMain.handle('logout', () => logout());
 ipcMain.handle('cancel-job', (_e, id) => cancelJob(id));
 ipcMain.handle('reveal', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('retry-tool', () => prepareTool().then(() => true, () => false));
+ipcMain.handle('history-list', () => listHistory());
+ipcMain.handle('history-check', (_e, keys) => checkHistory(Array.isArray(keys) ? keys : []));
+ipcMain.handle('history-remove', (_e, uid) => {
+  history = loadHistory().filter((h) => h.uid !== uid);
+  saveHistory();
+});
+ipcMain.handle('history-clear', () => {
+  history = [];
+  saveHistory();
+});
+ipcMain.handle('queue-load', () => loadQueue());
+ipcMain.handle('discard-work', (_e, uid) => {
+  if (!/^[\w-]{4,64}$/.test(uid || '') || [...jobs.values()].some((j) => j.uid === uid)) return;
+  return fs.promises.rm(path.join(workRoot, uid), { recursive: true, force: true }).catch(() => {});
+});
+ipcMain.on('queue-save', (_e, list) => Array.isArray(list) && saveQueue(list));
+ipcMain.handle('playlist-expand', (_e, url, folder) => expandPlaylist(url, folder));
+// No Electron 44 a área de transferência é assíncrona (readText devolve uma promessa).
+ipcMain.handle('clipboard-text', async () => String((await clipboard.readText()) || '').slice(0, 4000));
+ipcMain.handle('special-folders', () => ({ music: app.getPath('music'), videos: app.getPath('videos') }));
 
 if (!bridge.claimSingleInstance()) app.exit(0); // já há um YTA aberto: o pedido foi entregue a ele
 app.setAppUserModelId('local.yta'); // notificações do Windows com o nome e o ícone do app
 
 app.whenReady().then(() => {
-  fs.rm(workRoot, { recursive: true, force: true }, () => {}); // sobras de uma sessão interrompida
+  // Pastas de trabalho com mais de 3 dias são sobras; as recentes podem ser retomadas pela fila.
+  fs.promises
+    .readdir(workRoot, { withFileTypes: true })
+    .then((dirs) =>
+      Promise.all(
+        dirs.map(async (d) => {
+          const p = path.join(workRoot, d.name);
+          const { mtimeMs } = await fs.promises.stat(p);
+          if (Date.now() - mtimeMs > 3 * 24 * 60 * 60 * 1000) await fs.promises.rm(p, { recursive: true, force: true });
+        }),
+      ),
+    )
+    .catch(() => {});
   // Login por janela embutida da versão anterior (o Google bloqueava); não é mais usado.
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
   bridge.init({ getWin: () => win, probe, rendererReady: () => rendererReady });
 });
 app.on('before-quit', () => {
-  for (const id of jobs.keys()) cancelJob(id);
+  for (const [id, job] of jobs) {
+    job.keepPartial = true; // a fila volta ao reabrir e retoma destes pedaços
+    cancelJob(id);
+  }
+  flushQueue();
+  queueFrozen = true;
 });
 app.on('window-all-closed', () => {
   for (const id of jobs.keys()) cancelJob(id);

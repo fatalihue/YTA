@@ -102,18 +102,45 @@ function hideOnClose(win) {
   });
 }
 
+/* Iniciar com o Windows, já na bandeja (--hidden): a extensão sempre acha o YTA. Ligado por
+ * padrão na primeira execução instalada; só no app instalado (no desenvolvimento registraria o
+ * Electron de teste). */
+const LOGIN_ARGS = ['--hidden'];
+const autostartOn = () => app.isPackaged && app.getLoginItemSettings({ args: LOGIN_ARGS }).openAtLogin;
+function setAutostart(on) {
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({ openAtLogin: on, args: LOGIN_ARGS });
+  writeState({ autostartDecided: true });
+}
+function initAutostart() {
+  if (app.isPackaged && !readState().autostartDecided) setAutostart(true);
+}
+
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Abrir o YTA', click: showWindow },
+    { label: 'Conectar extensão do navegador…', click: () => showExtensionHelp() },
+    { type: 'separator' },
+    {
+      label: 'Iniciar com o Windows',
+      type: 'checkbox',
+      checked: autostartOn(),
+      enabled: app.isPackaged,
+      click: (item) => {
+        setAutostart(item.checked);
+        tray.setContextMenu(trayMenu());
+      },
+    },
+    { type: 'separator' },
+    { label: 'Sair', click: () => quit() },
+  ]);
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(icon);
   tray.setToolTip('YTA');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Abrir o YTA', click: showWindow },
-      { label: 'Conectar extensão do navegador…', click: () => showExtensionHelp() },
-      { type: 'separator' },
-      { label: 'Sair', click: () => quit() },
-    ]),
-  );
+  tray.setContextMenu(trayMenu());
   tray.on('click', showWindow);
 }
 
@@ -304,7 +331,7 @@ function ensureExtensionSynced() {
 
 async function showExtensionHelp() {
   const dir = extensionDir();
-  clipboard.writeText(dir);
+  await clipboard.writeText(dir); // assíncrono no Electron 44
   const connected = Date.now() - lastExtensionContact < 90_000;
   const { response } = await dialog.showMessageBox(ctx.getWin()?.isVisible() ? ctx.getWin() : undefined, {
     type: 'info',
@@ -334,7 +361,7 @@ function init(context) {
     quitting = true;
   });
   // Cada parte isolada: um problema numa (ex.: copiar a extensão) não derruba as outras.
-  for (const step of [registerProtocol, syncExtension, createTray, startServer]) {
+  for (const step of [registerProtocol, syncExtension, initAutostart, createTray, startServer]) {
     try {
       step();
     } catch (err) {

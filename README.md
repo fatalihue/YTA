@@ -69,6 +69,25 @@ npm run release -- "- Novidade 1" "- Novidade 2"
 release (marcada como *latest*) com o instalador, o `.blockmap` e o `latest.yml` — os arquivos que
 os apps instalados leem para se atualizar. Sem notas, o GitHub gera a partir dos commits.
 
+## No dia a dia
+
+- **Arrastar e soltar** um link do navegador na janela já põe na fila.
+- **Link copiado:** ao voltar para a janela com um link de vídeo na área de transferência, aparece
+  "Link copiado: … · Colar".
+- **Pastas separadas:** áudios vão para uma pasta e vídeos para outra (padrão: Música e Vídeos); a
+  linha "Salvar … em" mostra a do formato escolhido.
+- **Playlists do YouTube:** o link da playlist vira os vídeos dela, numerados (01, 02…) numa pasta
+  com o nome da playlist. Um vídeo aberto dentro de uma playlist pergunta "Só o vídeo" ou "A
+  playlist inteira". Os "Mix" automáticos (`list=RD…`) são infinitos e ficam como vídeo único.
+  Baixando a mesma playlist de novo, só os vídeos novos entram (os já baixados são pulados).
+- **Baixados:** a aba ao lado da fila guarda os últimos 1.000 downloads (abrir a pasta, baixar de
+  novo, tirar do histórico). Colar um link já baixado no mesmo formato avisa e oferece "Baixar de novo".
+- **A fila sobrevive ao fechar:** o que estava na fila ou baixando volta ao reabrir, e um download
+  interrompido continua de onde parou.
+- **Capa:** M4A e MP3 saem com a miniatura do vídeo como capa (o Opus não guarda capa).
+- **Iniciar com o Windows** (ícone da bandeja), ligado por padrão: o YTA abre já na bandeja e a
+  extensão sempre o encontra.
+
 ## Formatos
 
 | Formato | Como é gravado | Quando usar |

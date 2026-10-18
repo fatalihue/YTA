@@ -20,6 +20,7 @@ function duration(s) {
 
 const PHASE = {
   queued: { icon: Clock, text: 'Na fila', tone: 'text-text-tertiary' },
+  listing: { icon: Loader2, text: 'Lendo a playlist…', tone: 'text-text-tertiary', spin: true },
   preparing: { icon: Loader2, text: 'Buscando o vídeo…', tone: 'text-text-tertiary', spin: true },
   download: { icon: Loader2, text: 'Baixando', tone: 'text-accent', spin: true },
   convert: { icon: Loader2, text: 'Convertendo', tone: 'text-accent', spin: true },
@@ -166,7 +167,7 @@ function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin })
             </IconButton>
           </>
         )}
-        {item.phase === 'queued' && (
+        {(item.phase === 'queued' || item.phase === 'listing') && (
           <IconButton label="Tirar da fila" onClick={onCancel}>
             <X size={16} aria-hidden />
           </IconButton>
