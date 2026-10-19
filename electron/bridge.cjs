@@ -21,7 +21,7 @@ const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const PORTS = [47821, 47822, 47823]; // a extensão tenta na mesma ordem
 const PROTOCOL = 'yta';
 
-let ctx = null; // { getWin, probe, capture, discardWork, rendererReady }
+let ctx = null; // { getWin, probe, capture, askDownload, showDone, discardWork, rendererReady }
 let tray = null;
 let quitting = false;
 let port = null;
@@ -55,6 +55,22 @@ const readState = () => {
   }
 };
 const writeState = (patch) => fs.writeFileSync(stateFile(), JSON.stringify({ ...readState(), ...patch }));
+
+/* Preferências do acelerador: janela "Baixar arquivo" (perguntar onde salvar), janela "Download
+ * concluído" e a pasta lembrada. Mudam pela bandeja, pelo popup da extensão e pelas próprias janelas. */
+function downloadPrefs() {
+  const st = readState();
+  return { askSave: st.askSave ?? true, showDone: st.showDone ?? true, fileFolder: st.fileFolder || null };
+}
+function setDownloadPrefs(patch = {}) {
+  const clean = {};
+  for (const k of ['askSave', 'showDone']) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
+  if (typeof patch.fileFolder === 'string' && patch.fileFolder) clean.fileFolder = patch.fileFolder;
+  if (!Object.keys(clean).length) return downloadPrefs();
+  writeState(clean);
+  if (tray) tray.setContextMenu(trayMenu());
+  return downloadPrefs();
+}
 
 /** Pasta fixa da extensão (carregada no Chrome em modo desenvolvedor). */
 const extensionDir = () => path.join(app.getPath('userData'), 'extension');
@@ -134,6 +150,19 @@ function trayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Abrir o YTA', click: showWindow },
     { label: 'Conectar extensão do navegador…', click: () => showExtensionHelp() },
+    { type: 'separator' },
+    {
+      label: 'Perguntar onde salvar downloads',
+      type: 'checkbox',
+      checked: downloadPrefs().askSave,
+      click: (item) => setDownloadPrefs({ askSave: item.checked }),
+    },
+    {
+      label: 'Avisar ao concluir downloads',
+      type: 'checkbox',
+      checked: downloadPrefs().showDone,
+      click: (item) => setDownloadPrefs({ showDone: item.checked }),
+    },
     { type: 'separator' },
     {
       label: 'Iniciar com o Windows',
@@ -220,7 +249,9 @@ ipcMain.on('items-state', (_e, list) => {
     const before = items.get(it.id);
     items.set(it.id, it);
     if (!fromExtension.has(it.id) || before?.phase === it.phase) continue;
-    if (it.phase === 'done') {
+    if (it.phase === 'done' && it.kind === 'file' && it.file && downloadPrefs().showDone) {
+      ctx.showDone(it.file); // janela "Download concluído" no lugar da notificação
+    } else if (it.phase === 'done') {
       notify('Salvo pelo YTA', it.file ? path.basename(it.file) : it.title || it.url, () => it.file && shell.showItemInFolder(it.file));
     } else if (it.phase === 'error') {
       notify('O YTA não conseguiu baixar', `${it.title || it.url}\n${it.error || ''}`.trim(), showWindow);
@@ -254,9 +285,18 @@ function startServer() {
       if (req.method === 'POST' && url.pathname === '/capture') {
         const r = await ctx.capture(await readJson(req));
         if (!r.ok) return send(res, r);
+        // Com a janela "Baixar arquivo": o navegador já pode cancelar o dele; a fila espera a resposta.
+        if (downloadPrefs().askSave) {
+          ctx.askDownload(r.request);
+          return send(res, { ok: true, asked: true });
+        }
         const q = await enqueue(r.request);
         if (!q.ok) ctx.discardWork(r.request.uid);
         return send(res, q.ok ? { ok: true, id: q.id } : { ok: false, reason: q.error || 'O YTA não aceitou.' });
+      }
+      if (url.pathname === '/settings') {
+        const p = req.method === 'POST' ? setDownloadPrefs(await readJson(req)) : downloadPrefs();
+        return send(res, { askSave: p.askSave, showDone: p.showDone });
       }
       if (req.method === 'GET' && url.pathname === '/status') {
         const it = items.get(Number(url.searchParams.get('id')));
@@ -405,6 +445,9 @@ function init(context) {
 }
 
 module.exports = {
+  enqueue,
+  downloadPrefs,
+  setDownloadPrefs,
   claimSingleInstance,
   startsHidden,
   hideOnClose,

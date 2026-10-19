@@ -133,6 +133,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return call('/reveal', { method: 'POST', body: { id: msg.id } });
       case 'show':
         return call('/show', { method: 'POST', body: {} });
+      // Janelas do acelerador (ficam no app): perguntar onde salvar, avisar ao concluir.
+      case 'settings-get':
+        return call('/settings');
+      case 'settings-set':
+        return call('/settings', { method: 'POST', body: msg.patch });
       default:
         return null;
     }
@@ -166,14 +171,16 @@ async function cookiesFor(urls) {
 
 async function offerToYta(item) {
   const url = item.finalUrl || item.url;
-  if (!/^https?:/i.test(url)) return false; // blob:, data: (gerados pela página) ficam no navegador
+  // blob:, data: (gerados pela página) ficam no navegador
+  if (!/^https?:/i.test(url) || !/^https?:/i.test(item.url)) return false;
   if (item.byExtensionId || item.incognito) return false;
   const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize;
   if (size > 0 && size < CAPTURE_MIN) return false;
   const { capture = true } = await chrome.storage.sync.get('capture');
   if (!capture) return false;
   const body = {
-    url,
+    url: item.url, // o original identifica o item (o final costuma ser assinado e temporário)
+    finalUrl: item.finalUrl || null,
     referrer: item.referrer || null,
     filename: (item.filename || '').split(/[\\/]/).pop() || null,
     mime: item.mime || null,

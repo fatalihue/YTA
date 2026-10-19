@@ -61,7 +61,19 @@ arquivo de 1 GB 39 → 62 MB/s (o limite do link). Onde uma conexão já enche o
 - **Vai junto:** cookies do site (só para o próprio host; em redirecionamento para outro domínio eles
   não vão), a página de origem e o nome que o navegador deu. Guardados cifrados pelo Windows na
   pasta de trabalho do item, para a retomada ter o mesmo acesso.
-- **Destino:** a pasta Downloads do Windows; nunca sobrescreve ("Nome (2).zip").
+- **Janela "Baixar arquivo"** (como a do IDM): ao assumir um download, o YTA pergunta o nome (já
+  selecionado sem a extensão, para renomear) e a pasta ("Escolher…"), avisa se o nome já existe
+  ("vai salvar como Nome (2).zip"), e tem **Lembrar esta pasta** (vira o padrão) e **Não perguntar
+  de novo**. Enter baixa, Esc cancela (nada fica no disco).
+- **Janela "Download concluído":** Abrir, Abrir pasta, Fechar e **Não mostrar ao concluir**. Sem ela,
+  volta a notificação "Salvo pelo YTA".
+- **Ligar/desligar as janelas:** ícone da bandeja ("Perguntar onde salvar downloads", "Avisar ao
+  concluir downloads") ou o popup da extensão ("Perguntar onde salvar", "Avisar ao concluir").
+- **Destino sem perguntar:** a pasta lembrada (ou Downloads do Windows); nunca sobrescreve
+  ("Nome (2).zip").
+- **Links temporários:** muitos sites (GitHub, CDNs) mandam para um link assinado que expira em ~1 h.
+  O item guarda o endereço original (é ele que conta para "já baixado" e "Baixar de novo"); se o
+  link direto expirar numa pausa longa, o download continua pelo original, dos mesmos pedaços.
 - **Fila:** os arquivos entram na mesma fila, com 3 vagas próprias (um vídeo longo não segura um
   arquivo); pausar, retomar (também depois de fechar o app), cancelar e "Baixados" funcionam igual.
   A linha mostra quantas conexões estão baixando.

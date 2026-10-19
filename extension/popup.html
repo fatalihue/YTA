@@ -23,6 +23,7 @@
       .num { font-variant-numeric: tabular-nums; }
       .toggle { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; cursor: pointer; }
       .toggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+      #windows { margin: 0 0 12px; }
       .toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .link { all: unset; color: var(--accent-hover); cursor: pointer; }
       .link:hover { text-decoration: underline; }
@@ -35,6 +36,10 @@
     <p id="hint">Passe o mouse sobre um vídeo (YouTube, Instagram e a maioria dos sites) e use o botão “Baixar”. Clique direito em um link também funciona.</p>
     <label class="toggle"><input type="checkbox" id="capture" /> Acelerar downloads do navegador</label>
     <p>Arquivos de 1&nbsp;MB ou mais vão para o YTA e baixam em 8 conexões. Desligado, o navegador baixa sozinho.</p>
+    <div id="windows" hidden>
+      <label class="toggle"><input type="checkbox" id="ask-save" /> Perguntar onde salvar</label>
+      <label class="toggle"><input type="checkbox" id="show-done" /> Avisar ao concluir</label>
+    </div>
     <p id="hidden-sites" hidden></p>
     <button id="open">Abrir o YTA</button>
     <script src="popup.js"></script>

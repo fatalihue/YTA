@@ -660,7 +660,16 @@ async function discardWork(uid) {
   await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => {});
 }
 
-async function runFileJob({ id, uid, key, url, folder, title }) {
+/** Pasta dos downloads gerais: a lembrada na janela "Baixar arquivo", se ainda existir; senão Downloads. */
+function defaultFileFolder() {
+  const kept = bridge.downloadPrefs().fileFolder;
+  try {
+    if (kept && fs.statSync(kept).isDirectory()) return kept;
+  } catch {}
+  return app.getPath('downloads');
+}
+
+async function runFileJob({ id, uid, key, url, folder, title, fileName }) {
   if (jobs.has(id)) return { ok: false, error: 'Esse item já está em andamento.' };
   const ctrl = new AbortController();
   const job = { child: null, cancelled: false, keepPartial: false, uid, abort: () => ctrl.abort() };
@@ -669,7 +678,7 @@ async function runFileJob({ id, uid, key, url, folder, title }) {
   const workDir = workDirOf(safeUid);
   const targetFile = path.join(workDir, 'target.json');
   const stateFile = path.join(workDir, 'state.json');
-  const dest = folder || app.getPath('downloads');
+  const dest = folder || defaultFileFolder();
   let out = null;
   let part = null;
   try {
@@ -677,14 +686,28 @@ async function runFileJob({ id, uid, key, url, folder, title }) {
     fs.mkdirSync(workDir, { recursive: true });
     const req = readFileRequest(workDir);
     const opts = { cookies: req.cookies || {}, userAgent: req.userAgent || null, referer: req.referer || null };
+    // Endereços: o direto (o que o navegador baixava; em CDNs é assinado e expira em ~1 h) e o
+    // original (ex.: github.com/…/releases/download/…), que leva a um direto novo.
+    const sources = [...new Set([req.directUrl, url].filter((u) => /^https?:\/\//i.test(u || '')))];
+    let src = sources[0];
+    let nextSource = 1;
+    const expired = (err) => err instanceof accel.HttpError && [401, 403, 404, 410].includes(err.status);
     const target = readJsonFile(targetFile);
     let info = null;
     if (target?.out && target.part && fs.existsSync(target.part)) {
       ({ out, part } = target); // retomada: mesmo arquivo de antes
     } else {
-      info = await accel.probe(url, opts, ctrl.signal);
+      for (;;) {
+        try {
+          info = await accel.probe(src, opts, ctrl.signal);
+          break;
+        } catch (err) {
+          if (!expired(err) || nextSource >= sources.length) throw err;
+          src = sources[nextSource++];
+        }
+      }
       if (info.type === 'text/html' && !req.name) throw new Error('O link é de uma página, não de um arquivo.');
-      const { base, ext } = splitName(req.name || info.name || title || 'download', info.type);
+      const { base, ext } = splitName(fileName || req.name || info.name || title || 'download', info.type);
       out = uniqueFile(dest, base, ext);
       part = `${out}.part`;
       fs.writeFileSync(targetFile, JSON.stringify({ out, part }));
@@ -699,14 +722,20 @@ async function runFileJob({ id, uid, key, url, folder, title }) {
       }
     }
     const progress = throttled((p) => send('job-event', { id, type: 'progress', stage: 'download', percent: p.size ? Math.min(100, (p.done / p.size) * 100) : null, ...p }));
-    for (let restart = 0; ; restart++) {
+    for (let restart = 0; ; ) {
       try {
-        await accel.download({ url, opts, part, stateFile, signal: ctrl.signal, onProgress: progress });
+        await accel.download({ url: src, opts, part, stateFile, signal: ctrl.signal, onProgress: progress });
         break;
       } catch (err) {
+        if (job.cancelled) throw err;
         // Arquivo trocado no servidor desde a pausa: recomeça do zero uma vez.
-        if (err instanceof accel.RangeIgnored && restart === 0 && !job.cancelled) {
+        if (err instanceof accel.RangeIgnored && restart++ === 0) {
           fs.rmSync(stateFile, { force: true });
+          continue;
+        }
+        // Endereço direto expirou (pausa longa): segue pelo original, dos mesmos pedaços.
+        if (expired(err) && nextSource < sources.length) {
+          src = sources[nextSource++];
           continue;
         }
         throw err;
@@ -714,7 +743,7 @@ async function runFileJob({ id, uid, key, url, folder, title }) {
     }
     if (job.cancelled) throw new Cancelled();
     fs.renameSync(part, out);
-    accel.markOfTheWeb(out, { url, referer: opts.referer });
+    accel.markOfTheWeb(out, { url: src, referer: opts.referer });
     addHistory({ uid: safeUid, key, url, title: path.basename(out), format: 'file', files: [out] });
     return { ok: true, file: out, files: [out] };
   } catch (err) {
@@ -742,7 +771,10 @@ async function runFileJob({ id, uid, key, url, folder, title }) {
  * acelerar (o servidor aceita pedaços, 1 MB ou mais, não é página); o resto segue no navegador.
  */
 async function captureDownload(body) {
+  // url: o endereço original do download (identifica o item: "já baixado", "Baixar de novo");
+  // finalUrl: aonde ele levou (o arquivo em si; pode ser assinado e temporário).
   const url = String(body?.url || '');
+  const direct = /^https?:\/\//i.test(body?.finalUrl || '') ? String(body.finalUrl) : url;
   if (!/^https?:\/\//i.test(url)) return { ok: false, reason: 'Endereço não suportado.' };
   const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
   const cookies = {};
@@ -752,7 +784,7 @@ async function captureDownload(body) {
   const opts = { cookies, userAgent: str(body.userAgent, 400), referer: /^https?:/i.test(body.referrer || '') ? str(body.referrer, 2000) : null };
   let info;
   try {
-    info = await accel.probe(url, opts, AbortSignal.timeout(10_000));
+    info = await accel.probe(direct, opts, AbortSignal.timeout(10_000));
   } catch (err) {
     return { ok: false, reason: err.message };
   }
@@ -761,8 +793,106 @@ async function captureDownload(body) {
   if (info.size < CAPTURE_MIN) return { ok: false, reason: 'Arquivo pequeno.' };
   const name = str(body.filename, 255)?.split(/[\\/]/).pop() || info.name || null;
   const uid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  saveFileRequest(workDirOf(uid), { ...opts, name });
+  saveFileRequest(workDirOf(uid), { ...opts, name, directUrl: direct !== url ? direct : null });
   return { ok: true, request: { kind: 'file', url, uid, title: name, size: info.size } };
+}
+
+/* ---------- Janelas do acelerador ("Baixar arquivo" e "Download concluído", como no IDM) ----------
+ * Janelas pequenas, por cima das outras, uma por download; a página é a mesma do app (#ask/#done,
+ * src/DownloadDialog.jsx). Nascem escondidas e aparecem quando a página informa a altura. */
+const DIALOG_WIDTH = 480;
+const dialogs = new Map(); // webContents.id → { data, resolve }
+
+function openDialog(kind, data) {
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({
+      useContentSize: true,
+      width: DIALOG_WIDTH,
+      height: 200,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      show: false,
+      title: kind === 'ask' ? 'Baixar arquivo' : 'Download concluído',
+      icon: path.join(__dirname, 'tray.png'),
+      backgroundColor: '#121316',
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
+    });
+    const id = w.webContents.id;
+    dialogs.set(id, { data, resolve });
+    w.setMenu(null);
+    w.on('page-title-updated', (e) => e.preventDefault()); // o <title> da página é "YTA"
+    w.webContents.on('will-navigate', (e) => e.preventDefault());
+    w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    w.on('closed', () => {
+      // Fechada pelo X: conta como cancelar.
+      const d = dialogs.get(id);
+      dialogs.delete(id);
+      d?.resolve({ action: 'cancel' });
+    });
+    // Se a página não informar a altura (erro), aparece assim mesmo.
+    setTimeout(() => !w.isDestroyed() && !w.isVisible() && showDialog(w), 3000);
+    w.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash: kind });
+  });
+}
+function showDialog(w) {
+  w.center();
+  w.show();
+  w.focus();
+}
+
+ipcMain.handle('dialog-data', (e) => dialogs.get(e.sender.id)?.data ?? null);
+ipcMain.handle('dialog-answer', (e, answer) => {
+  const d = dialogs.get(e.sender.id);
+  dialogs.delete(e.sender.id);
+  d?.resolve(answer && typeof answer === 'object' ? answer : { action: 'cancel' });
+  BrowserWindow.fromWebContents(e.sender)?.close();
+});
+ipcMain.on('dialog-fit', (e, height) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || !dialogs.has(e.sender.id) || !(height > 0 && height < 1000)) return;
+  w.setContentSize(DIALOG_WIDTH, Math.ceil(height));
+  if (!w.isVisible()) showDialog(w);
+});
+// "Nome.zip" já existe na pasta? Devolve o nome que vai sair ("Nome (2).zip").
+ipcMain.handle('dialog-name-free', (_e, folder, name) => {
+  if (typeof folder !== 'string' || typeof name !== 'string') return null;
+  const { base, ext } = splitName(name);
+  const file = uniqueFile(folder, base, ext);
+  const wanted = path.join(folder, ext ? `${base}.${ext}` : base);
+  return { free: file.toLowerCase() === wanted.toLowerCase(), next: path.basename(file) };
+});
+ipcMain.handle('open-file', (_e, file) => typeof file === 'string' && fs.existsSync(file) && shell.openPath(file));
+ipcMain.handle('download-prefs-set', (_e, patch) => bridge.setDownloadPrefs(patch));
+
+/** Download capturado com "Perguntar onde salvar": a janela decide nome e pasta antes da fila. */
+async function askDownload(request) {
+  let host = '';
+  try {
+    host = new URL(request.url).hostname.replace(/^www\./, '');
+  } catch {}
+  const answer = await openDialog('ask', { name: request.title || 'download', size: request.size, host, folder: defaultFileFolder() });
+  if (answer.action !== 'download' || typeof answer.folder !== 'string' || !fs.existsSync(answer.folder)) {
+    return discardWork(request.uid);
+  }
+  bridge.setDownloadPrefs({ ...(answer.dontAsk ? { askSave: false } : {}), ...(answer.remember ? { fileFolder: answer.folder } : {}) });
+  const { base, ext } = splitName(String(answer.name || request.title || 'download'));
+  const fileName = ext ? `${base}.${ext}` : base;
+  const r = await bridge.enqueue({ ...request, title: fileName, fileName, folder: answer.folder });
+  if (!r.ok) discardWork(request.uid);
+}
+
+/** Terminou um download capturado: janela com Abrir / Abrir pasta. */
+function showDone(file) {
+  let size = null;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return; // apagado ou movido antes da janela
+  }
+  openDialog('done', { file, name: path.basename(file), folder: path.dirname(file), size });
 }
 
 /* ---------- Histórico (o que já foi baixado) ---------- */
@@ -1212,8 +1342,9 @@ ipcMain.on('renderer-ready', () => {
 });
 ipcMain.handle('tool-status', () => toolStatus);
 ipcMain.handle('default-folder', () => app.getPath('music'));
-ipcMain.handle('pick-folder', async (_e, start) => {
-  const r = await dialog.showOpenDialog(win, {
+ipcMain.handle('pick-folder', async (e, start) => {
+  // Da janela que pediu (a principal ou a "Baixar arquivo").
+  const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender) || win, {
     title: 'Escolher pasta',
     defaultPath: start || app.getPath('music'),
     properties: ['openDirectory', 'createDirectory'],
@@ -1289,7 +1420,7 @@ app.whenReady().then(() => {
   // Login por janela embutida da versão anterior (o Google bloqueava); não é mais usado.
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
-  bridge.init({ getWin: () => win, probe, capture: captureDownload, discardWork, rendererReady: () => rendererReady });
+  bridge.init({ getWin: () => win, probe, capture: captureDownload, askDownload, showDone, discardWork, rendererReady: () => rendererReady });
 });
 app.on('before-quit', () => {
   for (const [id, job] of jobs) {

@@ -44,4 +44,11 @@ contextBridge.exposeInMainWorld('yta', {
   expandPlaylist: (url, folder) => ipcRenderer.invoke('playlist-expand', url, folder),
   clipboardText: () => ipcRenderer.invoke('clipboard-text'),
   specialFolders: () => ipcRenderer.invoke('special-folders'),
+  // Janelas do acelerador (src/DownloadDialog.jsx).
+  dialogData: () => ipcRenderer.invoke('dialog-data'),
+  dialogAnswer: (answer) => ipcRenderer.invoke('dialog-answer', answer),
+  dialogFit: (height) => ipcRenderer.send('dialog-fit', height),
+  dialogNameFree: (folder, name) => ipcRenderer.invoke('dialog-name-free', folder, name),
+  openFile: (file) => ipcRenderer.invoke('open-file', file),
+  setDownloadPrefs: (patch) => ipcRenderer.invoke('download-prefs-set', patch),
 });

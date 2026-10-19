@@ -161,6 +161,7 @@ export default function App() {
       mediaUrl: over.mediaUrl || null,
       referer: over.referer || null,
       pageTitle: over.pageTitle || null,
+      fileName: over.fileName || null, // nome escolhido na janela "Baixar arquivo"
       phase: over.kind === 'playlist' ? 'listing' : 'queued',
       title: over.title || null,
       progress: {},
@@ -212,6 +213,9 @@ export default function App() {
       const item = makeItem(url, {
         uid: req.kind === 'file' ? req.uid : undefined, // a pasta de trabalho com o acesso do navegador
         title: req.kind === 'file' ? req.title : undefined,
+        // Nome e pasta escolhidos na janela "Baixar arquivo" (sem ela, o padrão do app).
+        fileName: req.kind === 'file' ? req.fileName : undefined,
+        folder: req.kind === 'file' && typeof req.folder === 'string' ? req.folder : undefined,
         format: fmt,
         bitrate: Number(req.bitrate) || undefined,
         maxHeight: req.maxHeight,
@@ -272,15 +276,15 @@ export default function App() {
       const list = itemsRef.current;
       api.reportItems(
         list.map((it) => ({
-          id: it.id, url: it.url, title: it.title, format: it.format, phase: it.phase,
+          id: it.id, url: it.url, title: it.title, format: it.format, kind: it.kind, phase: it.phase,
           part: it.progress?.part || null, percent: it.progress?.percent ?? null,
           copy: it.progress?.copy ?? null, file: it.file || null, error: it.error || null,
         })),
       );
       const pending = list
         .filter((it) => PENDING.includes(it.phase))
-        .map(({ uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title, phase }) => ({
-          uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title,
+        .map(({ uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title, fileName, phase }) => ({
+          uid: u, key, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, prefix, kind, mediaUrl, referer, pageTitle, title, fileName,
           paused: phase === 'paused',
         }));
       const json = JSON.stringify(pending);
@@ -310,9 +314,9 @@ export default function App() {
     for (const item of next) {
       running.current.set(item.id, item.kind);
       patch(item.id, { phase: 'preparing', progress: {}, error: null, retry: null });
-      const { id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle, kind, title } = item;
+      const { id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle, kind, title, fileName } = item;
       api
-        .run({ id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, kind, title: kind === 'file' ? title : pageTitle })
+        .run({ id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, kind, fileName, title: kind === 'file' ? title : pageTitle })
         .catch((err) => ({ ok: false, error: `Erro interno do YTA: ${err?.message || err}` }))
         .then((r) => {
           running.current.delete(item.id);
