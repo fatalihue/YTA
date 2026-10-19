@@ -47,6 +47,34 @@ próprio YTA a cada versão e a extensão se recarrega sozinha.
 **Segurança:** o YTA escuta só em `127.0.0.1` e só aceita pedidos da extensão (cabeçalho próprio,
 que páginas comuns não conseguem enviar, e origem `chrome-extension://` com o ID fixo dela).
 
+## Acelerador de downloads (como o IDM)
+
+Com a extensão, os downloads comuns do navegador (`.zip`, `.exe`, `.iso`, `.pdf`…) passam a ser
+feitos pelo YTA, divididos em até **8 conexões**. Servidores que limitam a velocidade por conexão
+(distantes ou sobrecarregados) ficam bem mais rápidos; medido: servidor na Suécia 0,4 → 3,0 MB/s,
+arquivo de 1 GB 39 → 62 MB/s (o limite do link). Onde uma conexão já enche o link, fica igual.
+
+- **Como funciona:** a extensão segura o download no momento em que o navegador escolhe o nome e
+  pergunta ao YTA. Ele assume só o que dá para acelerar — o servidor aceita pedaços, o arquivo tem
+  1 MB ou mais e não é página —; aí o navegador cancela o dele e aparece "Baixando com o YTA". O
+  resto (arquivos pequenos, `blob:`, servidores sem pedaços, YTA fechado) segue no navegador.
+- **Vai junto:** cookies do site (só para o próprio host; em redirecionamento para outro domínio eles
+  não vão), a página de origem e o nome que o navegador deu. Guardados cifrados pelo Windows na
+  pasta de trabalho do item, para a retomada ter o mesmo acesso.
+- **Destino:** a pasta Downloads do Windows; nunca sobrescreve ("Nome (2).zip").
+- **Fila:** os arquivos entram na mesma fila, com 3 vagas próprias (um vídeo longo não segura um
+  arquivo); pausar, retomar (também depois de fechar o app), cancelar e "Baixados" funcionam igual.
+  A linha mostra quantas conexões estão baixando.
+- **Link direto colado** (ou arrastado, ou clique direito num link `.zip`/`.exe`/…) também vai para o
+  acelerador, sem passar pelo yt-dlp.
+- **Conexões:** abre uma de cada vez (uma a cada 0,25 s), cada nova pegando metade do maior pedaço
+  que falta; quando uma termina, ajuda a que tem mais por fazer. Servidor que recusa conexões a mais
+  (429/503) para a rampa ali — nunca fica mais lento que uma conexão só. Conexão parada 30 s ou que
+  cai é retomada do ponto onde estava.
+- **Segurança:** o arquivo recebe a marca "baixado da internet" (Zone.Identifier), como o navegador
+  faz: o Windows continua avisando ao abrir um `.exe`.
+- **Desligar:** ícone da extensão → "Acelerar downloads do navegador".
+
 ## Bandeja
 
 Fechar a janela deixa o YTA rodando ao lado do relógio (para a extensão sempre achá-lo); "Sair" no

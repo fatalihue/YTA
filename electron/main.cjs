@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, execFile } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 const bridge = require('./bridge.cjs');
+const accel = require('./accel.cjs');
 
 // Em pacote, o binário do ffmpeg-static fica fora do asar.
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
@@ -12,6 +13,8 @@ const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-
 const binDir = path.join(app.getPath('userData'), 'bin');
 const ytdlpPath = path.join(binDir, 'yt-dlp.exe');
 const workRoot = path.join(app.getPath('temp'), 'yta');
+// Testes automáticos: pasta de Downloads trocada (nunca no app instalado), para não gravar na real.
+if (!app.isPackaged && process.env.YTA_TEST_DOWNLOADS) app.setPath('downloads', process.env.YTA_TEST_DOWNLOADS);
 // Cookies do login do YouTube, no formato que o yt-dlp lê (ver o bloco de login mais abaixo).
 const cookiesFile = path.join(app.getPath('userData'), 'youtube-cookies.txt');
 
@@ -177,10 +180,11 @@ const reserved = new Set();
 
 /** "Nome.m4a", ou "Nome (2).m4a" se já existir — nunca sobrescreve. */
 function uniqueFile(folder, name, ext) {
-  let candidate = path.join(folder, `${name}.${ext}`);
+  const dot = ext ? `.${ext}` : ''; // arquivo baixado pelo acelerador pode não ter extensão
+  let candidate = path.join(folder, `${name}${dot}`);
   const taken = (p) => reserved.has(p.toLowerCase()) || fs.existsSync(p) || fs.existsSync(`${p}.part`);
   for (let n = 2; taken(candidate); n++) {
-    candidate = path.join(folder, `${name} (${n}).${ext}`);
+    candidate = path.join(folder, `${name} (${n})${dot}`);
   }
   return candidate;
 }
@@ -596,6 +600,171 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
   }
 }
 
+/* ---------- Downloads em geral (o acelerador, como o IDM) ----------
+ * Arquivos comuns (.zip, .exe, .iso, .pdf…) não passam pelo yt-dlp: o motor de electron/accel.cjs
+ * divide em 8 conexões. Chegam pela captura da extensão (o download que o navegador ia fazer) ou
+ * por um link direto colado no app. O que o navegador sabia (cookies, página, nome sugerido) fica
+ * na pasta de trabalho do item, cifrado pelo Windows (safeStorage), para a retomada depois de
+ * fechar o app ter o mesmo acesso. */
+const CAPTURE_MIN = 1024 * 1024; // abaixo de 1 MB não há o que acelerar: fica com o navegador
+const MIME_EXT = {
+  'application/zip': 'zip', 'application/x-zip-compressed': 'zip', 'application/pdf': 'pdf',
+  'application/x-msdownload': 'exe', 'application/x-msi': 'msi', 'application/x-7z-compressed': '7z',
+  'application/vnd.rar': 'rar', 'application/x-rar-compressed': 'rar', 'application/x-iso9660-image': 'iso',
+  'application/gzip': 'gz', 'video/mp4': 'mp4', 'audio/mpeg': 'mp3', 'image/jpeg': 'jpg', 'image/png': 'png',
+};
+
+const workDirOf = (uid) => path.join(workRoot, uid);
+const validUid = (uid) => /^[\w-]{4,64}$/.test(uid || '');
+const readJsonFile = (file) => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+/** Acesso do navegador (cookies, user agent, página, nome) guardado para o item. */
+function saveFileRequest(workDir, req) {
+  fs.mkdirSync(workDir, { recursive: true });
+  const json = JSON.stringify(req);
+  // Sem a cifra do Windows disponível, os cookies não vão para o disco (a retomada tenta sem eles).
+  const data = safeStorage.isEncryptionAvailable()
+    ? { enc: safeStorage.encryptString(json).toString('base64') }
+    : { plain: { ...req, cookies: {} } };
+  fs.writeFileSync(path.join(workDir, 'request.json'), JSON.stringify(data));
+}
+function readFileRequest(workDir) {
+  const data = readJsonFile(path.join(workDir, 'request.json'));
+  if (!data) return {};
+  try {
+    return data.enc ? JSON.parse(safeStorage.decryptString(Buffer.from(data.enc, 'base64'))) : data.plain || {};
+  } catch {
+    return {};
+  }
+}
+
+/** "Relatório.tar.gz" → { base: "Relatório.tar", ext: "gz" }; sem extensão, tenta pelo tipo. */
+function splitName(name, type) {
+  const clean = path.basename(String(name || '').replace(/\\/g, '/')).trim();
+  const m = /^(.+)\.([\w-]{1,12})$/.exec(clean);
+  if (m) return { base: safeName(m[1]), ext: m[2].toLowerCase() };
+  return { base: safeName(clean || 'download'), ext: MIME_EXT[type] || '' };
+}
+
+/** Apaga a pasta de trabalho do item e o .part que ela aponta (download geral pausado ou com erro). */
+async function discardWork(uid) {
+  const dir = workDirOf(uid);
+  const target = readJsonFile(path.join(dir, 'target.json'));
+  if (target?.part && /\.part$/.test(target.part)) await fs.promises.rm(target.part, { force: true }).catch(() => {});
+  await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => {});
+}
+
+async function runFileJob({ id, uid, key, url, folder, title }) {
+  if (jobs.has(id)) return { ok: false, error: 'Esse item já está em andamento.' };
+  const ctrl = new AbortController();
+  const job = { child: null, cancelled: false, keepPartial: false, uid, abort: () => ctrl.abort() };
+  jobs.set(id, job);
+  const safeUid = validUid(uid) ? uid : `${id}-${Date.now().toString(36)}`;
+  const workDir = workDirOf(safeUid);
+  const targetFile = path.join(workDir, 'target.json');
+  const stateFile = path.join(workDir, 'state.json');
+  const dest = folder || app.getPath('downloads');
+  let out = null;
+  let part = null;
+  try {
+    if (!fs.existsSync(dest)) throw new Error('A pasta de destino não existe mais.');
+    fs.mkdirSync(workDir, { recursive: true });
+    const req = readFileRequest(workDir);
+    const opts = { cookies: req.cookies || {}, userAgent: req.userAgent || null, referer: req.referer || null };
+    const target = readJsonFile(targetFile);
+    let info = null;
+    if (target?.out && target.part && fs.existsSync(target.part)) {
+      ({ out, part } = target); // retomada: mesmo arquivo de antes
+    } else {
+      info = await accel.probe(url, opts, ctrl.signal);
+      if (info.type === 'text/html' && !req.name) throw new Error('O link é de uma página, não de um arquivo.');
+      const { base, ext } = splitName(req.name || info.name || title || 'download', info.type);
+      out = uniqueFile(dest, base, ext);
+      part = `${out}.part`;
+      fs.writeFileSync(targetFile, JSON.stringify({ out, part }));
+    }
+    reserved.add(out.toLowerCase());
+    send('job-event', { id, type: 'meta', title: path.basename(out), duration: null });
+    send('job-event', { id, type: 'target', file: out });
+    if (info?.size) {
+      const st = await fs.promises.statfs(dest).catch(() => null);
+      if (st && st.bavail * st.bsize < info.size) {
+        throw new Error(`Sem espaço no disco: o arquivo tem ${(info.size / 1024 ** 3).toFixed(1)} GB.`);
+      }
+    }
+    const progress = throttled((p) => send('job-event', { id, type: 'progress', stage: 'download', percent: p.size ? Math.min(100, (p.done / p.size) * 100) : null, ...p }));
+    for (let restart = 0; ; restart++) {
+      try {
+        await accel.download({ url, opts, part, stateFile, signal: ctrl.signal, onProgress: progress });
+        break;
+      } catch (err) {
+        // Arquivo trocado no servidor desde a pausa: recomeça do zero uma vez.
+        if (err instanceof accel.RangeIgnored && restart === 0 && !job.cancelled) {
+          fs.rmSync(stateFile, { force: true });
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (job.cancelled) throw new Cancelled();
+    fs.renameSync(part, out);
+    accel.markOfTheWeb(out, { url, referer: opts.referer });
+    addHistory({ uid: safeUid, key, url, title: path.basename(out), format: 'file', files: [out] });
+    return { ok: true, file: out, files: [out] };
+  } catch (err) {
+    if (job.cancelled) {
+      if (!job.keepPartial && part) fs.rmSync(part, { force: true });
+      return { ok: false, cancelled: true };
+    }
+    // Erro: guarda os pedaços; "Tentar de novo" continua deles ("Tirar da fila" apaga).
+    if (part && fs.existsSync(part)) job.keepPartial = true;
+    const msg = /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo/i.test(`${err.message} ${err.cause?.code || ''}`)
+      ? 'Sem conexão com o site. Verifique a internet.'
+      : /EACCES|EPERM/.test(err.code || '') ? 'Sem permissão para gravar na pasta.'
+      : /ENOSPC/.test(err.code || '') ? 'Sem espaço no disco de destino.'
+      : err.message;
+    return { ok: false, error: msg };
+  } finally {
+    if (out) reserved.delete(out.toLowerCase());
+    if (!job.keepPartial) await discardWork(safeUid);
+    jobs.delete(id);
+  }
+}
+
+/**
+ * Captura do navegador: a extensão segura o download e pergunta. O YTA só assume o que dá para
+ * acelerar (o servidor aceita pedaços, 1 MB ou mais, não é página); o resto segue no navegador.
+ */
+async function captureDownload(body) {
+  const url = String(body?.url || '');
+  if (!/^https?:\/\//i.test(url)) return { ok: false, reason: 'Endereço não suportado.' };
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
+  const cookies = {};
+  for (const [host, value] of Object.entries(body.cookies || {}).slice(0, 10)) {
+    if (/^[\w.-]+$/.test(host) && typeof value === 'string') cookies[host] = value.slice(0, 16_000);
+  }
+  const opts = { cookies, userAgent: str(body.userAgent, 400), referer: /^https?:/i.test(body.referrer || '') ? str(body.referrer, 2000) : null };
+  let info;
+  try {
+    info = await accel.probe(url, opts, AbortSignal.timeout(10_000));
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+  if (info.type === 'text/html') return { ok: false, reason: 'É uma página, não um arquivo.' };
+  if (!info.ranges) return { ok: false, reason: 'O servidor não aceita pedaços (não há o que acelerar).' };
+  if (info.size < CAPTURE_MIN) return { ok: false, reason: 'Arquivo pequeno.' };
+  const name = str(body.filename, 255)?.split(/[\\/]/).pop() || info.name || null;
+  const uid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  saveFileRequest(workDirOf(uid), { ...opts, name });
+  return { ok: true, request: { kind: 'file', url, uid, title: name, size: info.size } };
+}
+
 /* ---------- Histórico (o que já foi baixado) ---------- */
 const historyFile = path.join(app.getPath('userData'), 'history.json');
 const HISTORY_MAX = 1000;
@@ -997,6 +1166,7 @@ function cancelJob(id) {
   const job = jobs.get(id);
   if (!job) return;
   job.cancelled = true;
+  job.abort?.(); // acelerador: derruba as conexões
   if (isAlive(job.child)) killTree(job.child.pid);
 }
 
@@ -1057,7 +1227,7 @@ ipcMain.handle('folder-exists', (_e, p) => {
     return false;
   }
 });
-ipcMain.handle('run-job', (_e, opts) => runJob(opts));
+ipcMain.handle('run-job', (_e, opts) => (opts?.kind === 'file' ? runFileJob(opts) : runJob(opts)));
 ipcMain.handle('probe', (_e, url) => probe(url));
 ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-install', () => installUpdate());
@@ -1090,8 +1260,8 @@ ipcMain.handle('history-clear', () => {
 });
 ipcMain.handle('queue-load', () => loadQueue());
 ipcMain.handle('discard-work', (_e, uid) => {
-  if (!/^[\w-]{4,64}$/.test(uid || '') || [...jobs.values()].some((j) => j.uid === uid)) return;
-  return fs.promises.rm(path.join(workRoot, uid), { recursive: true, force: true }).catch(() => {});
+  if (!validUid(uid) || [...jobs.values()].some((j) => j.uid === uid)) return;
+  return discardWork(uid);
 });
 ipcMain.on('queue-save', (_e, list) => Array.isArray(list) && saveQueue(list));
 ipcMain.handle('playlist-expand', (_e, url, folder) => expandPlaylist(url, folder));
@@ -1111,7 +1281,7 @@ app.whenReady().then(() => {
         dirs.map(async (d) => {
           const p = path.join(workRoot, d.name);
           const { mtimeMs } = await fs.promises.stat(p);
-          if (Date.now() - mtimeMs > 3 * 24 * 60 * 60 * 1000) await fs.promises.rm(p, { recursive: true, force: true });
+          if (Date.now() - mtimeMs > 3 * 24 * 60 * 60 * 1000) await discardWork(d.name); // e o .part do acelerador
         }),
       ),
     )
@@ -1119,7 +1289,7 @@ app.whenReady().then(() => {
   // Login por janela embutida da versão anterior (o Google bloqueava); não é mais usado.
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
-  bridge.init({ getWin: () => win, probe, rendererReady: () => rendererReady });
+  bridge.init({ getWin: () => win, probe, capture: captureDownload, discardWork, rendererReady: () => rendererReady });
 });
 app.on('before-quit', () => {
   for (const [id, job] of jobs) {

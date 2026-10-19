@@ -21,7 +21,7 @@ const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const PORTS = [47821, 47822, 47823]; // a extensão tenta na mesma ordem
 const PROTOCOL = 'yta';
 
-let ctx = null; // { getWin, probe, rendererReady }
+let ctx = null; // { getWin, probe, capture, discardWork, rendererReady }
 let tray = null;
 let quitting = false;
 let port = null;
@@ -194,7 +194,8 @@ function enqueue(request) {
   }).then((r) => {
     if (r.ok) {
       fromExtension.add(r.id);
-      notify('Adicionado à fila do YTA', request.url);
+      if (request.kind === 'file') notify('Baixando com o YTA', request.title || request.url);
+      else notify('Adicionado à fila do YTA', request.url);
     }
     return r;
   });
@@ -249,6 +250,14 @@ function startServer() {
         if (!body?.url) return send(res, { ok: false, error: 'Sem link.' }, 400);
         return send(res, await enqueue(body));
       }
+      // Download do navegador que a extensão segurou: o YTA assume se der para acelerar.
+      if (req.method === 'POST' && url.pathname === '/capture') {
+        const r = await ctx.capture(await readJson(req));
+        if (!r.ok) return send(res, r);
+        const q = await enqueue(r.request);
+        if (!q.ok) ctx.discardWork(r.request.uid);
+        return send(res, q.ok ? { ok: true, id: q.id } : { ok: false, reason: q.error || 'O YTA não aceitou.' });
+      }
       if (req.method === 'GET' && url.pathname === '/status') {
         const it = items.get(Number(url.searchParams.get('id')));
         return send(res, it || { phase: 'gone' });
@@ -293,7 +302,7 @@ function readJson(req) {
     let raw = '';
     req.on('data', (c) => {
       raw += c;
-      if (raw.length > 64 * 1024) req.destroy();
+      if (raw.length > 256 * 1024) req.destroy(); // cookies do download cabem com folga
     });
     req.on('end', () => {
       try {

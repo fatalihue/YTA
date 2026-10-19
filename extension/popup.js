@@ -36,5 +36,12 @@ async function showHidden() {
   hiddenEl.append(undo);
 }
 
+/* Acelerador: ligado por padrão. */
+const captureEl = document.getElementById('capture');
+chrome.storage.sync.get('capture').then(({ capture = true }) => {
+  captureEl.checked = capture;
+});
+captureEl.addEventListener('change', () => chrome.storage.sync.set({ capture: captureEl.checked }));
+
 refresh();
 showHidden();

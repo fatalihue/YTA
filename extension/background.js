@@ -140,6 +140,62 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   return true; // resposta assíncrona
 });
 
+/* ---------- Acelerador: downloads do navegador vão para o YTA (como o IDM) ----------
+ * O download é segurado no momento em que o navegador escolhe o nome (o arquivo ainda está
+ * chegando) e oferecido ao YTA. Se ele assumir (o servidor aceita pedaços e o arquivo tem 1 MB ou
+ * mais), o navegador cancela o dele; se recusar, estiver fechado ou demorar, o download segue
+ * normal no navegador — nada se perde. Os cookies vão junto porque muitos downloads exigem a
+ * sessão do site; só os do próprio arquivo (e do endereço de origem, se for outro). */
+const CAPTURE_MIN = 1024 * 1024;
+
+async function cookiesFor(urls) {
+  const out = {};
+  for (const u of urls) {
+    let host;
+    try {
+      host = new URL(u).hostname;
+    } catch {
+      continue;
+    }
+    if (host in out) continue;
+    const list = await chrome.cookies.getAll({ url: u }).catch(() => []);
+    out[host] = list.map((c) => `${c.name}=${c.value}`).join('; ');
+  }
+  return out;
+}
+
+async function offerToYta(item) {
+  const url = item.finalUrl || item.url;
+  if (!/^https?:/i.test(url)) return false; // blob:, data: (gerados pela página) ficam no navegador
+  if (item.byExtensionId || item.incognito) return false;
+  const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize;
+  if (size > 0 && size < CAPTURE_MIN) return false;
+  const { capture = true } = await chrome.storage.sync.get('capture');
+  if (!capture) return false;
+  const body = {
+    url,
+    referrer: item.referrer || null,
+    filename: (item.filename || '').split(/[\\/]/).pop() || null,
+    mime: item.mime || null,
+    size: size > 0 ? size : null,
+    cookies: await cookiesFor([url, item.url]),
+    userAgent: navigator.userAgent,
+  };
+  const r = await Promise.race([call('/capture', { method: 'POST', body }), new Promise((res) => setTimeout(() => res(null), 15_000))]);
+  return Boolean(r?.ok);
+}
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  offerToYta(item)
+    .catch(() => false)
+    .then(async (taken) => {
+      if (!taken) return suggest();
+      await chrome.downloads.cancel(item.id).catch(() => {});
+      chrome.downloads.erase({ id: item.id }).catch(() => {}); // some da lista de downloads do navegador
+    });
+  return true; // nome decidido depois (o download espera)
+});
+
 /* Clique direito: "Baixar com o YTA" em links, páginas e vídeos, com a última escolha. */
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {

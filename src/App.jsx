@@ -30,9 +30,20 @@ const INSTAGRAM = /^(https?:\/\/)?(www\.)?instagram\.com\/(p|reels?|tv|stories)\
 // Qualquer outro site: o yt-dlp reconhece ~1.800 e tem um extrator genérico para o resto.
 const WEB = /^https?:\/\/[^\s/?#]+\.[^\s/?#]+\S*$/i;
 const SUPPORTED = (url) => YOUTUBE.test(url) || INSTAGRAM.test(url) || WEB.test(url);
+// Link direto de arquivo (não de vídeo): vai para o acelerador, não para o yt-dlp. Mídia (.mp4,
+// .mp3) continua no yt-dlp, que respeita o formato escolhido.
+const FILE_EXT = /\.(zip|rar|7z|tar|gz|tgz|bz2|xz|zst|exe|msi|msix|msixbundle|appx|appxbundle|iso|img|vhdx?|dmg|apk|xapk|apks|deb|rpm|pdf|epub|cbz|cbr|psd|bin|cab|jar|nupkg|whl)$/i;
+function isFileLink(url) {
+  try {
+    return WEB.test(url) && !YOUTUBE.test(url) && !INSTAGRAM.test(url) && FILE_EXT.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
 const ACTIVE = ['preparing', 'download', 'convert'];
 const PENDING = ['queued', 'listing', 'paused', ...ACTIVE]; // ainda vai baixar (é o que a fila salva guarda)
 // Itens processados ao mesmo tempo: sobrepõe as consultas ao YouTube e usa mais núcleos na conversão.
+// Downloads em geral (acelerador) têm as suas 3 vagas: um vídeo longo não segura um arquivo.
 const PARALLEL = 3;
 const HISTORY_SHOWN = 300; // o histórico guarda 1.000; a lista mostra os mais recentes
 
@@ -112,7 +123,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
-  const running = useRef(new Set()); // ids em andamento
+  const running = useRef(new Map()); // id → tipo, em andamento
   const listing = useRef(new Set()); // playlists sendo lidas
   const pausing = useRef(new Set()); // em andamento que pedimos para pausar (o resultado volta como cancelado)
   const textareaRef = useRef(null);
@@ -133,18 +144,20 @@ export default function App() {
   function makeItem(url, over = {}) {
     const s = settingsRef.current;
     const fmt = over.format || s.format;
+    const file = fmt === 'file';
     return {
       id: nextId++,
-      uid: uid(),
+      uid: over.uid || uid(),
       url,
       format: fmt,
-      folder: over.folder || (fmt === 'video' ? s.folderVideo : s.folderAudio),
+      // Arquivos vão para a pasta Downloads do Windows (o app decide; null = padrão).
+      folder: file ? over.folder || null : over.folder || (fmt === 'video' ? s.folderVideo : s.folderAudio),
       bitrate: over.bitrate || s.bitrate,
       maxHeight: fmt === 'video' ? (over.maxHeight === undefined ? s.maxHeight : over.maxHeight) : null,
       compat: fmt === 'video' && (over.compat === undefined ? s.compat : Boolean(over.compat)),
       key: historyKey(url, fmt),
       prefix: over.prefix || '',
-      kind: over.kind || 'video',
+      kind: file ? 'file' : over.kind || 'video',
       mediaUrl: over.mediaUrl || null,
       referer: over.referer || null,
       pageTitle: over.pageTitle || null,
@@ -186,15 +199,19 @@ export default function App() {
         api.externalAdded({ reqId: req.reqId, ok: false, error: 'O YTA ainda não baixa deste site.' });
         return;
       }
-      const fmt = ['m4a', 'opus', 'mp3', 'video'].includes(req.format) ? req.format : settingsRef.current.format;
+      // Download capturado ou link direto de arquivo (clique direito num .zip): acelerador.
+      const fmt = req.kind === 'file' || isFileLink(url) ? 'file' : ['m4a', 'opus', 'mp3', 'video'].includes(req.format) ? req.format : settingsRef.current.format;
       const same = itemsRef.current.find(
         (it) => PENDING.includes(it.phase) && it.kind !== 'playlist' && historyKey(it.url, it.format) === historyKey(url, fmt),
       );
       if (same) {
+        if (req.kind === 'file' && req.uid) api.discardWork(req.uid); // já está na fila: o acesso guardado sobra
         api.externalAdded({ reqId: req.reqId, ok: true, id: same.id, existing: true });
         return;
       }
       const item = makeItem(url, {
+        uid: req.kind === 'file' ? req.uid : undefined, // a pasta de trabalho com o acesso do navegador
+        title: req.kind === 'file' ? req.title : undefined,
         format: fmt,
         bitrate: Number(req.bitrate) || undefined,
         maxHeight: req.maxHeight,
@@ -284,14 +301,18 @@ export default function App() {
   // Fila: até PARALLEL itens ao mesmo tempo, iniciados na ordem em que entraram.
   useEffect(() => {
     if (tool.state === 'error') return;
-    const free = PARALLEL - running.current.size;
-    const next = items.filter((it) => it.phase === 'queued').slice(0, Math.max(0, free));
+    const busy = (file) => [...running.current.values()].filter((k) => (k === 'file') === file).length;
+    const queued = items.filter((it) => it.phase === 'queued');
+    const next = [
+      ...queued.filter((it) => it.kind === 'file').slice(0, Math.max(0, PARALLEL - busy(true))),
+      ...queued.filter((it) => it.kind !== 'file').slice(0, Math.max(0, PARALLEL - busy(false))),
+    ];
     for (const item of next) {
-      running.current.add(item.id);
+      running.current.set(item.id, item.kind);
       patch(item.id, { phase: 'preparing', progress: {}, error: null, retry: null });
-      const { id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle } = item;
+      const { id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, pageTitle, kind, title } = item;
       api
-        .run({ id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, title: pageTitle })
+        .run({ id, uid: u, key, prefix, url, folder: dir, format: fmt, bitrate: kbps, maxHeight: cap, compat: h264, mediaUrl, referer, kind, title: kind === 'file' ? title : pageTitle })
         .catch((err) => ({ ok: false, error: `Erro interno do YTA: ${err?.message || err}` }))
         .then((r) => {
           running.current.delete(item.id);
@@ -347,7 +368,7 @@ export default function App() {
   }, [items, tool.state]);
 
   const validLinks = links.split(/\s+/).filter((l) => SUPPORTED(l));
-  const singleLink = validLinks.length === 1 && !playlistOf(validLinks[0])?.only ? validLinks[0] : null;
+  const singleLink = validLinks.length === 1 && !playlistOf(validLinks[0])?.only && !isFileLink(validLinks[0]) ? validLinks[0] : null;
 
   // Com um só link e Vídeo escolhido, consulta as resoluções que esse vídeo tem.
   useEffect(() => {
@@ -388,7 +409,8 @@ export default function App() {
     const valid = [];
     const invalid = [];
     for (const l of lines) (SUPPORTED(l) ? valid : invalid).push(l);
-    const fmt = settingsRef.current.format;
+    const chosen = settingsRef.current.format;
+    const fmtOf = (url) => (isFileLink(url) ? 'file' : chosen);
     const seen = new Set();
     let repeated = 0;
     const videos = [];
@@ -396,8 +418,8 @@ export default function App() {
     const ambiguous = [];
     for (const url of valid) {
       const pl = playlistOf(url);
-      const k = pl?.only ? `pl:${playlistUrl(url)}` : historyKey(url, fmt);
-      if (seen.has(k) || (!pl?.only && isPending(url, fmt))) {
+      const k = pl?.only ? `pl:${playlistUrl(url)}` : historyKey(url, fmtOf(url));
+      if (seen.has(k) || (!pl?.only && isPending(url, fmtOf(url)))) {
         repeated++;
         continue;
       }
@@ -406,10 +428,11 @@ export default function App() {
       else if (pl) ambiguous.push(url);
       else videos.push(url);
     }
-    const done = videos.length ? await api.historyCheck(videos.map((u) => historyKey(u, fmt))) : {};
-    const already = videos.filter((u) => done[historyKey(u, fmt)]);
-    const fresh = videos.filter((u) => !done[historyKey(u, fmt)]);
-    addItems([...fresh.map((u) => makeItem(u)), ...playlists.map((u) => makeItem(u, { kind: 'playlist' }))]);
+    const done = videos.length ? await api.historyCheck(videos.map((u) => historyKey(u, fmtOf(u)))) : {};
+    const already = videos.filter((u) => done[historyKey(u, fmtOf(u))]);
+    const fresh = videos.filter((u) => !done[historyKey(u, fmtOf(u))]);
+    const asItem = (u) => makeItem(u, { format: fmtOf(u) });
+    addItems([...fresh.map(asItem), ...playlists.map((u) => makeItem(u, { kind: 'playlist' }))]);
 
     if (keepInvalid) setLinks(invalid.join('\n')); // o que não deu para enfileirar fica no campo
     setLinksError(
@@ -431,8 +454,8 @@ export default function App() {
       });
     } else if (already.length) {
       setNotice({
-        text: already.length === 1 ? 'Este vídeo já foi baixado.' : `${already.length} vídeos já foram baixados.`,
-        actions: [{ label: 'Baixar de novo', run: () => addItems(already.map((u) => makeItem(u))) }],
+        text: already.length === 1 ? (isFileLink(already[0]) ? 'Este arquivo já foi baixado.' : 'Este vídeo já foi baixado.') : `${already.length} links já foram baixados.`,
+        actions: [{ label: 'Baixar de novo', run: () => addItems(already.map(asItem)) }],
       });
     } else if (repeated) {
       setNotice({ text: repeated === 1 ? '1 link já estava na fila.' : `${repeated} links já estavam na fila.`, actions: [] });
@@ -564,14 +587,23 @@ export default function App() {
     const r = await login(item.url);
     if (r.extraOk || (known && r.loggedIn)) retry(item);
   }
-  const remove = (item) => setItems((list) => list.filter((it) => it.id !== item.id));
-  const clearFinished = () => setItems((list) => list.filter((it) => PENDING.includes(it.phase)));
+  // Arquivo com erro guarda os pedaços para "Tentar de novo"; tirar da fila os apaga.
+  const dropWork = (it) => it.kind === 'file' && it.phase === 'error' && it.uid && api.discardWork(it.uid);
+  const remove = (item) => {
+    dropWork(item);
+    setItems((list) => list.filter((it) => it.id !== item.id));
+  };
+  const clearFinished = () => {
+    itemsRef.current.filter((it) => !PENDING.includes(it.phase)).forEach(dropWork);
+    setItems((list) => list.filter((it) => PENDING.includes(it.phase)));
+  };
 
   const finished = items.filter((it) => ['done', 'error', 'cancelled'].includes(it.phase)).length;
   const canPause = items.some((it) => it.phase === 'queued' || (ACTIVE.includes(it.phase) && !it.pausing));
   const canResume = items.some((it) => it.phase === 'paused');
   const done = items.filter((it) => it.phase === 'done').length;
-  const noun = format === 'video' ? ['vídeo', 'vídeos'] : ['áudio', 'áudios'];
+  const onlyFiles = validLinks.length > 0 && validLinks.every(isFileLink);
+  const noun = onlyFiles ? ['arquivo', 'arquivos'] : format === 'video' ? ['vídeo', 'vídeos'] : ['áudio', 'áudios'];
 
   // Linha de ajuda dos links: aviso com ações > link copiado > dica.
   const linksHint = notice ? (
@@ -582,13 +614,13 @@ export default function App() {
       actions={[{ label: 'Colar', run: pasteOffer }]}
     />
   ) : (
-    'YouTube, Instagram e a maioria dos sites. Um por linha; Ctrl+Enter adiciona.'
+    'Vídeos de quase todo site ou links diretos de arquivo. Um por linha; Ctrl+Enter adiciona.'
   );
 
   return (
     <main className="relative flex h-full flex-col bg-bg-base">
       <form onSubmit={submit} className="flex shrink-0 flex-col gap-3 p-6 pb-4" noValidate>
-        <Field label="Links de vídeo" hint={linksHint} error={linksError}>
+        <Field label="Links" hint={linksHint} error={linksError}>
           {({ id, describedBy, invalid }) => (
             <textarea
               ref={textareaRef}
@@ -789,7 +821,7 @@ export default function App() {
                 key={entry.uid + entry.at}
                 entry={entry}
                 onReveal={() => entry.files?.[0] && api.reveal(entry.files.find(Boolean))}
-                onAgain={() => addItems([makeItem(entry.url, { format: entry.format })])}
+                onAgain={() => addItems([makeItem(entry.url, { format: entry.format, title: entry.format === 'file' ? entry.title : null })])}
                 onRemove={() => api.historyRemove(entry.uid).then(() => setHistory((h) => h.filter((x) => x.uid !== entry.uid)))}
               />
             ))}

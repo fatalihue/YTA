@@ -41,6 +41,8 @@ function details(item) {
     if (p.done !== null && p.done !== undefined) parts.push(p.size ? `${bytes(p.done)} de ${bytes(p.size)}` : bytes(p.done));
     if (p.speed) parts.push(`${bytes(p.speed)}/s`);
     if (p.eta !== null && p.eta !== undefined && p.percent < 100) parts.push(`${duration(p.eta)} restante`);
+    // Acelerador: quantas conexões estão baixando o arquivo agora.
+    if (item.kind === 'file' && p.conns > 1) parts.push(`${p.conns} conexões`);
     return parts;
   }
   // Pausado: sem percentual. Com 8 pedaços em paralelo, os que estavam pela metade são baixados de
@@ -67,6 +69,8 @@ function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin, o
   const phase =
     ACTIVE_PHASES.includes(item.phase) && item.pausing
       ? { ...base, text: 'Pausando…' }
+      : item.phase === 'preparing' && item.kind === 'file'
+      ? { ...base, text: 'Conectando…' }
       : item.phase === 'preparing' && item.retry?.media
       ? { ...base, text: 'Página não reconhecida; baixando o vídeo que ela tocava…' }
       : item.phase === 'preparing' && item.retry?.login

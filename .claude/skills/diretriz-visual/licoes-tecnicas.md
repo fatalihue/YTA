@@ -70,3 +70,11 @@ foco, tipografia ou fazer codemod.
     `awaitPromise` devolve `{}`). Nos testes, encadear `.then(String, e => 'ERRO ' + e.message)`.
 21. **Teste que baixa de verdade precisa de trava de pasta**: conferir que o destino é o do teste
     antes do primeiro download (uma corrida já mandou arquivos de teste para a pasta Música).
+22. **Acelerador: abrir as 8 conexões de uma vez é pior que uma só** em servidores com limite (a
+    Hetzner responde 429 a partir da 3ª; medido 26,7 → 2,8 MB/s). Abrir em rampa e parar na primeira
+    recusa de uma conexão nova; devolver o pedaço recusado à conexão de onde ele saiu.
+23. **Testar downloads no Edge/Chrome por script:** o 2º download disparado pela mesma página é
+    segurado pelo aviso "baixar vários arquivos" e nem chega à extensão. No perfil de teste:
+    `profile.default_content_setting_values.automatic_downloads = 1` em `Default/Preferences`.
+24. **Servidor de teste de velocidade pode recusar User-Agent de navegador** (a Hetzner fecha a
+    conexão para "Mozilla/…"). Medir com um UA neutro; no app, a captura usa o UA do navegador.

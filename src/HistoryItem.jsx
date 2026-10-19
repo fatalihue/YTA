@@ -3,7 +3,7 @@ import { CheckCircle2, CircleOff, FolderOpen, RotateCw, Trash2 } from 'lucide-re
 import { IconButton } from './ui.jsx';
 
 const when = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-const FORMAT_LABEL = { m4a: 'M4A', opus: 'Opus', mp3: 'MP3', video: 'Vídeo' };
+const FORMAT_LABEL = { m4a: 'M4A', opus: 'Opus', mp3: 'MP3', video: 'Vídeo', file: 'Arquivo' };
 
 /** Um download já feito: abrir a pasta, baixar de novo ou tirar do histórico. */
 function HistoryItemView({ entry, onReveal, onAgain, onRemove }) {
