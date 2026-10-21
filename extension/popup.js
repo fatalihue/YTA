@@ -51,14 +51,14 @@ const windowsEl = document.getElementById('windows');
 const askEl = document.getElementById('ask-save');
 const doneEl = document.getElementById('show-done');
 chrome.runtime.sendMessage({ type: 'settings-get' }).then((s) => {
-  if (!s || typeof s.askSave !== 'boolean') return; // YTA fechado ou antigo
+  if (!s || typeof s.askSave !== 'boolean' || typeof s.showProgress !== 'boolean') return; // YTA fechado ou antigo
   askEl.checked = s.askSave;
-  doneEl.checked = s.showDone;
+  doneEl.checked = s.showProgress;
   windowsEl.dataset.ready = '1';
   windowsEl.hidden = !captureEl.checked;
 }, () => {});
 askEl.addEventListener('change', () => chrome.runtime.sendMessage({ type: 'settings-set', patch: { askSave: askEl.checked } }));
-doneEl.addEventListener('change', () => chrome.runtime.sendMessage({ type: 'settings-set', patch: { showDone: doneEl.checked } }));
+doneEl.addEventListener('change', () => chrome.runtime.sendMessage({ type: 'settings-set', patch: { showProgress: doneEl.checked } }));
 
 refresh();
 showHidden();

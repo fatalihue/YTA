@@ -65,10 +65,17 @@ arquivo de 1 GB 39 → 62 MB/s (o limite do link). Onde uma conexão já enche o
   selecionado sem a extensão, para renomear) e a pasta ("Escolher…"), avisa se o nome já existe
   ("vai salvar como Nome (2).zip"), e tem **Lembrar esta pasta** (vira o padrão) e **Não perguntar
   de novo**. Enter baixa, Esc cancela (nada fica no disco).
-- **Janela "Download concluído":** Abrir, Abrir pasta, Fechar e **Não mostrar ao concluir**. Sem ela,
-  volta a notificação "Salvo pelo YTA".
-- **Ligar/desligar as janelas:** ícone da bandeja ("Perguntar onde salvar downloads", "Avisar ao
-  concluir downloads") ou o popup da extensão ("Perguntar onde salvar", "Avisar ao concluir").
+- **Janela de andamento** (como a do IDM), para tudo que vem do navegador — download capturado
+  (depois do "Baixar") e botão "Baixar" do vídeo: porcentagem, baixado, velocidade, tempo restante e
+  conexões (no vídeo, o formato/resolução), com a etapa ("Buscando o vídeo…", "Baixando vídeo",
+  "Juntando vídeo e áudio"…). **Pausar/Retomar** e **Cancelar** agem no item da fila; **Esconder**
+  (ou X, ou Esc) só fecha a janela — o download segue e avisa por notificação no fim. Ao terminar, a
+  mesma janela mostra **Concluído** (tamanho, média, tempo) com Abrir e Abrir pasta; com erro,
+  **Tentar de novo**. Aparece na frente sem roubar o foco, no máximo 3 de cada vez (em cascata; os
+  demais só na fila). **Não mostrar esta janela** desliga para os próximos. O que se cola no próprio
+  app não abre janela (a fila já mostra).
+- **Ligar/desligar as janelas:** ícone da bandeja ("Perguntar onde salvar downloads", "Mostrar
+  janela de andamento") ou o popup da extensão ("Perguntar onde salvar", "Mostrar andamento").
 - **Destino sem perguntar:** a pasta lembrada (ou Downloads do Windows); nunca sobrescreve
   ("Nome (2).zip").
 - **Links temporários:** muitos sites (GitHub, CDNs) mandam para um link assinado que expira em ~1 h.

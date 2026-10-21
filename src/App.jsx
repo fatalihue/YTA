@@ -279,6 +279,10 @@ export default function App() {
           id: it.id, url: it.url, title: it.title, format: it.format, kind: it.kind, phase: it.phase,
           part: it.progress?.part || null, percent: it.progress?.percent ?? null,
           copy: it.progress?.copy ?? null, file: it.file || null, error: it.error || null,
+          // Para a janela de andamento (electron/main.cjs > progressUpdate).
+          done: it.progress?.done ?? null, size: it.progress?.size ?? null, speed: it.progress?.speed ?? null,
+          eta: it.progress?.eta ?? null, conns: it.progress?.conns ?? null, height: it.height || null,
+          files: it.files || null, folder: it.folder || null, pausing: Boolean(it.pausing), retry: Boolean(it.retry),
         })),
       );
       const pending = list
@@ -562,6 +566,14 @@ export default function App() {
   /** Retomar: volta para a fila na mesma ordem e continua dos pedaços já baixados. */
   const resumeAll = () => setItems((list) => list.map((it) => (it.phase === 'paused' ? { ...it, phase: 'queued' } : it)));
   const resume = (item) => patch(item.id, { phase: 'queued' });
+  /** Pausar um item só (botão da janela de andamento): o mesmo que o "Pausar tudo" faz com ele. */
+  function pauseItem(item) {
+    if (item.phase === 'queued') return patch(item.id, { phase: 'paused' });
+    if (!ACTIVE.includes(item.phase) || pausing.current.has(item.id)) return;
+    pausing.current.add(item.id);
+    api.pause(item.id);
+    patch(item.id, { pausing: true });
+  }
 
   function cancel(item) {
     if (item.phase === 'queued' || item.phase === 'listing' || item.phase === 'paused') {
@@ -593,6 +605,18 @@ export default function App() {
   }
   // Arquivo com erro guarda os pedaços para "Tentar de novo"; tirar da fila os apaga.
   const dropWork = (it) => it.kind === 'file' && it.phase === 'error' && it.uid && api.discardWork(it.uid);
+  // Botões da janela de andamento chegam aqui (a fila é desta janela).
+  const itemActions = useRef({});
+  itemActions.current = { pause: pauseItem, resume, cancel, retry };
+  useEffect(
+    () =>
+      api.onItemAction(({ id, action }) => {
+        const item = itemsRef.current.find((it) => it.id === id);
+        if (item) itemActions.current[action]?.(item);
+      }),
+    [],
+  );
+
   const remove = (item) => {
     dropWork(item);
     setItems((list) => list.filter((it) => it.id !== item.id));

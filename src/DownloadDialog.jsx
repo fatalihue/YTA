@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, FolderOpen } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, FolderOpen, Pause, Play, RotateCw } from 'lucide-react';
 import { Button, Field } from './ui.jsx';
 
 /*
  * Janelas pequenas do acelerador (como as do IDM, sem o resto):
  * - "ask": o YTA assumiu um download do navegador — nome, pasta, lembrar a pasta, baixar/cancelar;
- * - "done": terminou — abrir o arquivo ou a pasta.
+ * - "progress": andamento de um item que veio do navegador (download capturado ou botão do vídeo):
+ *   baixando → pausado → concluído/erro, na mesma janela, com as ações da fila (Pausar, Cancelar…).
  * Cada uma é uma janela própria do Electron; a altura segue o conteúdo (dialogFit).
  */
 const api = window.yta;
@@ -17,6 +18,38 @@ function bytes(n) {
   if (n < 1024 ** 3) return `${decimal.format(n / 1024 / 1024)} MB`;
   return `${decimal.format(n / 1024 ** 3)} GB`;
 }
+function duration(s) {
+  if (s === null || s === undefined) return null;
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+const ACTIVE = ['preparing', 'download', 'convert'];
+const FORMAT_LABEL = { m4a: 'M4A', opus: 'Opus', mp3: 'MP3', video: 'MP4' };
+
+/** O que está acontecendo, nas palavras da fila (QueueItem). */
+function phaseText(it) {
+  if (it.pausing && ACTIVE.includes(it.phase)) return 'Pausando…';
+  switch (it.phase) {
+    case 'queued':
+      return 'Na fila';
+    case 'preparing':
+      return it.kind === 'file' ? 'Conectando…' : it.retry ? 'Tentando de novo…' : 'Buscando o vídeo…';
+    case 'download':
+      return it.part === 'video' ? 'Baixando vídeo' : it.part === 'audio' ? 'Baixando áudio' : 'Baixando';
+    case 'convert':
+      if (it.format === 'video') return it.copy === false ? 'Convertendo para H.264' : 'Juntando vídeo e áudio';
+      return it.copy ? 'Finalizando' : `Convertendo para ${FORMAT_LABEL[it.format] || it.format}`;
+    case 'paused':
+      return 'Pausado';
+    case 'done':
+      return 'Concluído';
+    case 'error':
+      return 'Falhou';
+    default:
+      return '';
+  }
+}
 
 export default function DownloadDialog({ kind }) {
   const [data, setData] = useState(null);
@@ -26,7 +59,8 @@ export default function DownloadDialog({ kind }) {
   }, []);
   // A janela nasce escondida e só aparece com a altura certa.
   useLayoutEffect(() => {
-    if (data && ref.current) api.dialogFit(ref.current.offsetHeight);
+    document.documentElement.style.overflow = 'hidden'; // a janela já tem a altura do conteúdo
+    if (data && ref.current) api.dialogFit(Math.ceil(ref.current.getBoundingClientRect().height));
   });
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && api.dialogAnswer({ action: 'cancel' });
@@ -36,7 +70,7 @@ export default function DownloadDialog({ kind }) {
   if (!data) return null;
   return (
     <div ref={ref} className="bg-bg-base">
-      {kind === 'ask' ? <Ask data={data} /> : <Done data={data} />}
+      {kind === 'ask' ? <Ask data={data} /> : <Progress data={data} />}
     </div>
   );
 }
@@ -142,57 +176,199 @@ function Ask({ data }) {
   );
 }
 
-function Done({ data }) {
+function Progress({ data }) {
+  const [it, setIt] = useState(data);
   const [dontShow, setDontShow] = useState(false);
-  const openRef = useRef(null);
-  useEffect(() => openRef.current?.focus(), []);
-  const close = () => api.dialogAnswer({ action: 'close' });
+  // O que a janela acumula por conta própria: tamanho de cada parte baixada (vídeo e áudio vêm
+  // separados), o último percentual (pausado) e o tempo ativo (média e duração no fim).
+  const track = useRef({ sizes: {}, got: {}, conns: 0, percent: 0, active: 0, at: 0, phase: null });
+  useEffect(
+    () =>
+      api.onProgressUpdate((next) => {
+        const t = track.current;
+        const now = Date.now();
+        if (t.at && ACTIVE.includes(t.phase)) t.active += now - t.at;
+        t.at = now;
+        t.phase = next.phase;
+        if (next.phase === 'download') {
+          const part = next.part || 'main';
+          if (next.size) t.sizes[part] = next.size;
+          if (next.done != null) t.got[part] = next.done;
+          if (next.conns > t.conns) t.conns = next.conns;
+        }
+        if (ACTIVE.includes(next.phase) && next.percent != null) t.percent = next.percent;
+        setIt(next);
+      }),
+    [],
+  );
+
+  const t = track.current;
+  const file = it.kind === 'file';
+  const name = it.title || it.url;
+  const active = ACTIVE.includes(it.phase);
+  const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0) || null;
+  const downloaded = sum(t.sizes);
+  const got = sum(t.got); // pausado: o que já veio, não o tamanho
+  const last = file
+    ? ['Conexões', it.phase === 'download' && it.conns > 0 ? String(it.conns) : it.phase === 'done' && t.conns ? String(t.conns) : '—']
+    : ['Formato', it.format === 'video' ? (it.height ? `${it.height}p · MP4` : 'MP4') : FORMAT_LABEL[it.format] || '—'];
+  const dash = '—';
+  const cells =
+    it.phase === 'download'
+      ? [
+          ['Baixado', it.done != null && it.size ? `${bytes(it.done)} de ${bytes(it.size)}` : bytes(it.done) || dash],
+          ['Velocidade', it.speed ? `${bytes(it.speed)}/s` : dash],
+          ['Restante', it.eta != null ? duration(it.eta) : dash],
+          last,
+        ]
+      : it.phase === 'convert'
+        ? [
+            ['Baixado', bytes(downloaded) || dash],
+            ['Velocidade', !it.copy && it.speed ? `${decimal.format(it.speed)}× o tempo real` : dash],
+            ['Restante', it.eta != null ? duration(Math.ceil(it.eta)) : dash],
+            last,
+          ]
+        : it.phase === 'paused'
+          ? [['Baixado', got && downloaded ? `${bytes(got)} de ${bytes(downloaded)}` : bytes(got) || dash], ['Velocidade', 'Pausado'], ['Restante', dash], last]
+          : it.phase === 'done'
+            ? [
+                ['Tamanho', bytes(it.doneSize) || dash],
+                ['Média', it.doneSize && t.active > 1000 ? `${bytes(it.doneSize / (t.active / 1000))}/s` : dash],
+                ['Tempo', t.active > 0 ? duration(Math.max(1, t.active / 1000)) : dash],
+                last,
+              ]
+            : [['Baixado', dash], ['Velocidade', dash], ['Restante', dash], last];
+  const percent = it.phase === 'done' ? 100 : active && it.percent != null ? it.percent : t.percent;
+  const many = (it.files?.length || 0) > 1;
+  const act = (action) => api.itemAction(action);
+  const hide = () => api.dialogAnswer({ action: 'close' });
+
   return (
-    <div className="flex flex-col gap-4 p-5">
-      <div className="flex min-w-0 gap-3">
-        <CheckCircle2 size={20} aria-hidden className="mt-0.5 shrink-0 text-success-fg" />
-        <div className="flex min-w-0 flex-col gap-1">
-          <p className="truncate font-mono text-body text-text-primary">{data.name}</p>
-          <p className="truncate text-minor text-text-secondary">
-            <span className="tabular-nums">{bytes(data.size)}</span>
-            <span aria-hidden className="text-text-tertiary"> · </span>
-            <span className="font-mono">{data.folder}</span>
-          </p>
-        </div>
+    <div className="flex flex-col gap-3 p-5">
+      <div className="flex min-w-0 items-center gap-3">
+        {it.phase === 'done' && <CheckCircle2 size={16} aria-hidden className="shrink-0 text-success-fg" />}
+        {it.phase === 'error' && <AlertCircle size={16} aria-hidden className="shrink-0 text-danger-fg" />}
+        <p className={`min-w-0 flex-1 truncate text-body text-text-primary ${file ? 'font-mono' : ''}`}>{name}</p>
+        <span
+          className={`shrink-0 text-body font-medium tabular-nums ${
+            it.phase === 'done' ? 'text-success-fg' : it.phase === 'error' ? 'text-danger-fg' : it.phase === 'paused' ? 'text-text-secondary' : 'text-text-primary'
+          }`}
+        >
+          {it.phase === 'done' ? 'Concluído' : it.phase === 'error' ? 'Falhou' : `${Math.floor(percent || 0)}%`}
+        </span>
       </div>
+      <div
+        role="progressbar"
+        aria-label={phaseText(it)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.floor(percent || 0)}
+        className="h-1.5 overflow-hidden rounded-full bg-bg-elevated"
+      >
+        <div
+          className={`h-full origin-left motion-ok:transition-transform motion-ok:duration-(--motion-base) ${
+            it.phase === 'done' ? 'bg-success-fg' : it.phase === 'paused' || it.phase === 'error' ? 'bg-text-tertiary' : 'bg-accent-solid'
+          }`}
+          style={{ transform: `scaleX(${(percent || 0) / 100})` }}
+        />
+      </div>
+      <p className="truncate text-caption text-text-tertiary" aria-live="polite">
+        {it.phase !== 'done' && it.phase !== 'error' && (
+          <>
+            <span className="text-text-secondary">{phaseText(it)}</span>
+            <span aria-hidden> · </span>
+          </>
+        )}
+        {it.host}
+        {it.folder && (
+          <>
+            <span aria-hidden> → </span>
+            <span className="font-mono">{it.folder}</span>
+          </>
+        )}
+      </p>
+      {it.phase === 'error' ? (
+        <p className="text-minor text-danger-fg" role="alert">
+          {it.error || 'O download falhou.'}
+        </p>
+      ) : (
+        <div className="grid grid-cols-[3fr_2fr_2fr_2fr] gap-3">
+          {cells.map(([label, value]) => (
+            <div key={label} className="flex min-w-0 flex-col gap-0.5">
+              <span className="label-micro text-text-tertiary">{label}</span>
+              <span className={`truncate text-body tabular-nums ${value === dash || value === 'Pausado' ? 'text-text-secondary' : 'text-text-primary'}`}>
+                {value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-2 border-t border-border-subtle pt-4">
         <Check
           checked={dontShow}
           onChange={(v) => {
-            setDontShow(v); // vale na hora (fechar pelo X ou Esc também conta)
-            api.setDownloadPrefs({ showDone: !v });
+            setDontShow(v); // vale na hora; religa na bandeja ou no popup da extensão
+            api.setDownloadPrefs({ showProgress: !v });
           }}
         >
-          Não mostrar ao concluir
+          Não mostrar esta janela
         </Check>
         <span className="flex-1" />
-        <Button variant="ghost" onClick={close}>
-          Fechar
-        </Button>
-        <Button
-          onClick={() => {
-            api.reveal(data.file);
-            close();
-          }}
-        >
-          <FolderOpen size={16} aria-hidden />
-          Abrir pasta
-        </Button>
-        <Button
-          ref={openRef}
-          variant="primary"
-          onClick={() => {
-            api.openFile(data.file);
-            close();
-          }}
-        >
-          Abrir
-        </Button>
+        {it.phase === 'done' ? (
+          <>
+            <Button variant="ghost" onClick={hide}>
+              Fechar
+            </Button>
+            <Button
+              onClick={() => {
+                api.reveal(it.file);
+                hide();
+              }}
+            >
+              <FolderOpen size={16} aria-hidden />
+              Abrir pasta
+            </Button>
+            {!many && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  api.openFile(it.file);
+                  hide();
+                }}
+              >
+                Abrir
+              </Button>
+            )}
+          </>
+        ) : it.phase === 'error' ? (
+          <>
+            <Button variant="ghost" onClick={hide}>
+              Fechar
+            </Button>
+            <Button variant="primary" onClick={() => act('retry')}>
+              <RotateCw size={16} aria-hidden />
+              Tentar de novo
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={() => act('cancel')}>
+              Cancelar
+            </Button>
+            {it.phase === 'paused' ? (
+              <Button variant="primary" onClick={() => act('resume')}>
+                <Play size={16} aria-hidden />
+                Retomar
+              </Button>
+            ) : (
+              <Button disabled={it.pausing} onClick={() => act('pause')}>
+                <Pause size={16} aria-hidden />
+                Pausar
+              </Button>
+            )}
+            <Button onClick={hide}>Esconder</Button>
+          </>
+        )}
       </div>
     </div>
   );

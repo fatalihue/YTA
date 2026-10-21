@@ -21,7 +21,7 @@ const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const PORTS = [47821, 47822, 47823]; // a extensão tenta na mesma ordem
 const PROTOCOL = 'yta';
 
-let ctx = null; // { getWin, probe, capture, askDownload, showDone, discardWork, rendererReady }
+let ctx = null; // { getWin, probe, capture, askDownload, openProgress, hasProgress, progressUpdate, discardWork, rendererReady }
 let tray = null;
 let quitting = false;
 let port = null;
@@ -56,15 +56,16 @@ const readState = () => {
 };
 const writeState = (patch) => fs.writeFileSync(stateFile(), JSON.stringify({ ...readState(), ...patch }));
 
-/* Preferências do acelerador: janela "Baixar arquivo" (perguntar onde salvar), janela "Download
- * concluído" e a pasta lembrada. Mudam pela bandeja, pelo popup da extensão e pelas próprias janelas. */
+/* Preferências das janelas do navegador: "Baixar arquivo" (perguntar onde salvar), a de andamento
+ * e a pasta lembrada. Mudam pela bandeja, pelo popup da extensão e pelas próprias janelas.
+ * (showProgress substitui o showDone da 1.6.0: a janela de andamento termina como "Concluído".) */
 function downloadPrefs() {
   const st = readState();
-  return { askSave: st.askSave ?? true, showDone: st.showDone ?? true, fileFolder: st.fileFolder || null };
+  return { askSave: st.askSave ?? true, showProgress: st.showProgress ?? st.showDone ?? true, fileFolder: st.fileFolder || null };
 }
 function setDownloadPrefs(patch = {}) {
   const clean = {};
-  for (const k of ['askSave', 'showDone']) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
+  for (const k of ['askSave', 'showProgress']) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
   if (typeof patch.fileFolder === 'string' && patch.fileFolder) clean.fileFolder = patch.fileFolder;
   if (!Object.keys(clean).length) return downloadPrefs();
   writeState(clean);
@@ -158,10 +159,10 @@ function trayMenu() {
       click: (item) => setDownloadPrefs({ askSave: item.checked }),
     },
     {
-      label: 'Avisar ao concluir downloads',
+      label: 'Mostrar janela de andamento',
       type: 'checkbox',
-      checked: downloadPrefs().showDone,
-      click: (item) => setDownloadPrefs({ showDone: item.checked }),
+      checked: downloadPrefs().showProgress,
+      click: (item) => setDownloadPrefs({ showProgress: item.checked }),
     },
     { type: 'separator' },
     {
@@ -223,6 +224,9 @@ function enqueue(request) {
   }).then((r) => {
     if (r.ok) {
       fromExtension.add(r.id);
+      // Janela de andamento (botão do vídeo ou download capturado); sem ela, a notificação de sempre.
+      const shown = r.existing ? ctx.hasProgress(r.id) : ctx.openProgress({ id: r.id, ...request });
+      if (shown) return r;
       if (request.kind === 'file') notify('Baixando com o YTA', request.title || request.url);
       else notify('Adicionado à fila do YTA', request.url);
     }
@@ -248,16 +252,16 @@ ipcMain.on('items-state', (_e, list) => {
     seen.add(it.id);
     const before = items.get(it.id);
     items.set(it.id, it);
-    if (!fromExtension.has(it.id) || before?.phase === it.phase) continue;
-    if (it.phase === 'done' && it.kind === 'file' && it.file && downloadPrefs().showDone) {
-      ctx.showDone(it.file); // janela "Download concluído" no lugar da notificação
-    } else if (it.phase === 'done') {
+    // Com a janela de andamento aberta, ela mesma mostra "Concluído"/"Falhou".
+    if (!fromExtension.has(it.id) || before?.phase === it.phase || ctx.hasProgress(it.id)) continue;
+    if (it.phase === 'done') {
       notify('Salvo pelo YTA', it.file ? path.basename(it.file) : it.title || it.url, () => it.file && shell.showItemInFolder(it.file));
     } else if (it.phase === 'error') {
       notify('O YTA não conseguiu baixar', `${it.title || it.url}\n${it.error || ''}`.trim(), showWindow);
     }
   }
   for (const id of items.keys()) if (!seen.has(id)) items.delete(id); // tirado da fila
+  ctx.progressUpdate(list);
 });
 
 /* ---------- Servidor local para a extensão ---------- */
@@ -296,7 +300,7 @@ function startServer() {
       }
       if (url.pathname === '/settings') {
         const p = req.method === 'POST' ? setDownloadPrefs(await readJson(req)) : downloadPrefs();
-        return send(res, { askSave: p.askSave, showDone: p.showDone });
+        return send(res, { askSave: p.askSave, showProgress: p.showProgress });
       }
       if (req.method === 'GET' && url.pathname === '/status') {
         const it = items.get(Number(url.searchParams.get('id')));

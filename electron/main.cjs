@@ -95,6 +95,9 @@ function friendlyError(stderr) {
   if (GENERIC_LOGIN.test(raw)) return 'Este site exige login. Entre na conta pelo YTA e tente de novo.';
   if (/rate-?limit/i.test(raw)) return 'O Instagram limitou os acessos. Entre na conta ou tente mais tarde.';
   if (/there is no video in this post|no video formats/i.test(raw)) return 'Este post não tem vídeo.';
+  // O site respondeu (não é falta de internet): "unable to download webpage: HTTP Error 404".
+  if (/HTTP Error 404|HTTP Error 410/i.test(raw)) return 'O vídeo não existe mais nesse endereço.';
+  if (/HTTP Error 40[13]/i.test(raw)) return 'O site recusou o acesso (pode exigir login).';
   if (/unable to download webpage|getaddrinfo|timed out|connection/i.test(raw)) return 'Sem conexão. Verifique a internet.';
   if (/is not a valid url/i.test(raw)) return 'Endereço inválido.';
   if (/unsupported url|no video could be found|no media found/i.test(raw)) return 'Não encontrei vídeo nesta página.';
@@ -797,31 +800,37 @@ async function captureDownload(body) {
   return { ok: true, request: { kind: 'file', url, uid, title: name, size: info.size } };
 }
 
-/* ---------- Janelas do acelerador ("Baixar arquivo" e "Download concluído", como no IDM) ----------
- * Janelas pequenas, por cima das outras, uma por download; a página é a mesma do app (#ask/#done,
- * src/DownloadDialog.jsx). Nascem escondidas e aparecem quando a página informa a altura. */
+/* ---------- Janelas do acelerador ("Baixar arquivo" e a de andamento, como no IDM) ----------
+ * Janelas pequenas, uma por download; a página é a mesma do app (#ask/#progress,
+ * src/DownloadDialog.jsx). Nascem escondidas e aparecem quando a página informa a altura.
+ * - "ask": por cima de tudo e com o foco (Enter baixa);
+ * - "progress": aparece na frente sem roubar o foco (quem clicou no vídeo segue no navegador), por
+ *   cima só nos primeiros segundos, em cascata; no máximo 3 abertas — as demais só na fila. */
 const DIALOG_WIDTH = 480;
-const dialogs = new Map(); // webContents.id → { data, resolve }
+const PROGRESS_MAX = 3;
+const dialogs = new Map(); // webContents.id → { data, resolve, focus, slot }
+const progressWins = new Map(); // id do item na fila → { w, last, doneSize }
 
-function openDialog(kind, data) {
+function openDialog(kind, data, { focus = true, slot = 0, onWindow } = {}) {
   return new Promise((resolve) => {
     const w = new BrowserWindow({
       useContentSize: true,
       width: DIALOG_WIDTH,
       height: 200,
       resizable: false,
-      minimizable: false,
+      minimizable: kind === 'progress',
       maximizable: false,
       fullscreenable: false,
       alwaysOnTop: true,
       show: false,
-      title: kind === 'ask' ? 'Baixar arquivo' : 'Download concluído',
+      title: kind === 'ask' ? 'Baixar arquivo' : 'Baixando',
       icon: path.join(__dirname, 'tray.png'),
       backgroundColor: '#121316',
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
     });
     const id = w.webContents.id;
-    dialogs.set(id, { data, resolve });
+    dialogs.set(id, { data, resolve, focus, slot });
+    onWindow?.(w);
     w.setMenu(null);
     w.on('page-title-updated', (e) => e.preventDefault()); // o <title> da página é "YTA"
     w.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -833,14 +842,23 @@ function openDialog(kind, data) {
       d?.resolve({ action: 'cancel' });
     });
     // Se a página não informar a altura (erro), aparece assim mesmo.
-    setTimeout(() => !w.isDestroyed() && !w.isVisible() && showDialog(w), 3000);
+    setTimeout(() => !w.isDestroyed() && !w.isVisible() && showDialog(w, { focus, slot }), 3000);
     w.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash: kind });
   });
 }
-function showDialog(w) {
+function showDialog(w, { focus, slot }) {
   w.center();
-  w.show();
-  w.focus();
+  if (slot) {
+    const [x, y] = w.getPosition();
+    w.setPosition(x + slot * 28, y + slot * 28); // cascata: uma não cobre a outra inteira
+  }
+  if (focus) {
+    w.show();
+    w.focus();
+    return;
+  }
+  w.showInactive();
+  setTimeout(() => !w.isDestroyed() && w.setAlwaysOnTop(false), 3000);
 }
 
 ipcMain.handle('dialog-data', (e) => dialogs.get(e.sender.id)?.data ?? null);
@@ -854,7 +872,7 @@ ipcMain.on('dialog-fit', (e, height) => {
   const w = BrowserWindow.fromWebContents(e.sender);
   if (!w || !dialogs.has(e.sender.id) || !(height > 0 && height < 1000)) return;
   w.setContentSize(DIALOG_WIDTH, Math.ceil(height));
-  if (!w.isVisible()) showDialog(w);
+  if (!w.isVisible()) showDialog(w, dialogs.get(e.sender.id));
 });
 // "Nome.zip" já existe na pasta? Devolve o nome que vai sair ("Nome (2).zip").
 ipcMain.handle('dialog-name-free', (_e, folder, name) => {
@@ -884,16 +902,92 @@ async function askDownload(request) {
   if (!r.ok) discardWork(request.uid);
 }
 
-/** Terminou um download capturado: janela com Abrir / Abrir pasta. */
-function showDone(file) {
-  let size = null;
+const hostOf = (url) => {
   try {
-    size = fs.statSync(file).size;
+    return new URL(url).hostname.replace(/^www\./, '');
   } catch {
-    return; // apagado ou movido antes da janela
+    return '';
   }
-  openDialog('done', { file, name: path.basename(file), folder: path.dirname(file), size });
+};
+
+/**
+ * Item que veio do navegador entrou na fila: abre a janela de andamento (se a preferência
+ * permitir e houver vaga). Devolve se abriu — sem janela, a ponte avisa por notificação.
+ */
+function openProgress(item) {
+  if (!bridge.downloadPrefs().showProgress) return false;
+  if (progressWins.has(item.id)) return true;
+  if (progressWins.size >= PROGRESS_MAX) return false;
+  const entry = { w: null, last: null, doneSize: undefined };
+  progressWins.set(item.id, entry);
+  const data = {
+    id: item.id,
+    kind: item.kind === 'file' ? 'file' : 'video',
+    format: item.kind === 'file' ? 'file' : item.format || 'm4a',
+    phase: 'queued',
+    title: item.title || null,
+    url: item.url,
+    host: hostOf(item.url),
+    folder: item.folder || (item.kind === 'file' ? defaultFileFolder() : null),
+  };
+  openDialog('progress', data, {
+    focus: false,
+    slot: progressWins.size - 1,
+    onWindow: (w) => {
+      entry.w = w;
+      w.on('closed', () => progressWins.delete(item.id));
+    },
+  });
+  return true;
 }
+const hasProgress = (id) => Boolean(progressWins.get(id)?.w && !progressWins.get(id).w.isDestroyed());
+
+/** Estado da fila (a cada mudança): atualiza as janelas de andamento abertas. */
+function progressUpdate(list) {
+  for (const [id, entry] of progressWins) {
+    const w = entry.w;
+    if (!w || w.isDestroyed()) continue;
+    const it = list.find((x) => x.id === id);
+    if (!it || it.phase === 'cancelled') {
+      w.close(); // cancelado ou tirado da fila
+      continue;
+    }
+    if (it.phase === 'done' && entry.doneSize === undefined) {
+      entry.doneSize = (it.files || [it.file]).filter(Boolean).reduce((sum, f) => {
+        try {
+          return sum + fs.statSync(f).size;
+        } catch {
+          return sum;
+        }
+      }, 0) || null;
+    }
+    const payload = {
+      ...it,
+      host: hostOf(it.url),
+      folder: it.file ? path.dirname(it.file) : it.folder || (it.kind === 'file' ? defaultFileFolder() : null),
+      doneSize: entry.doneSize ?? null,
+    };
+    const key = JSON.stringify(payload);
+    if (key === entry.last) continue;
+    entry.last = key;
+    w.webContents.send('progress-update', payload);
+    const name = it.title || hostOf(it.url);
+    w.setTitle(
+      it.phase === 'done' ? `Concluído · ${name}`
+      : it.phase === 'error' ? `Falhou · ${name}`
+      : it.phase === 'paused' ? `Pausado · ${name}`
+      : it.percent != null && ['download', 'convert'].includes(it.phase) ? `${Math.floor(it.percent)}% · ${name}`
+      : name,
+    );
+  }
+}
+
+// Botões da janela de andamento: quem manda na fila é a janela principal.
+ipcMain.handle('item-action', (e, action) => {
+  const id = [...progressWins].find(([, entry]) => entry.w && !entry.w.isDestroyed() && entry.w.webContents.id === e.sender.id)?.[0];
+  if (id === undefined || !['pause', 'resume', 'cancel', 'retry'].includes(action)) return;
+  win?.webContents.send('item-action', { id, action });
+});
 
 /* ---------- Histórico (o que já foi baixado) ---------- */
 const historyFile = path.join(app.getPath('userData'), 'history.json');
@@ -1420,7 +1514,7 @@ app.whenReady().then(() => {
   // Login por janela embutida da versão anterior (o Google bloqueava); não é mais usado.
   fs.rm(path.join(app.getPath('userData'), 'Partitions', 'youtube-login'), { recursive: true, force: true }, () => {});
   createWindow();
-  bridge.init({ getWin: () => win, probe, capture: captureDownload, askDownload, showDone, discardWork, rendererReady: () => rendererReady });
+  bridge.init({ getWin: () => win, probe, capture: captureDownload, askDownload, openProgress, hasProgress, progressUpdate, discardWork, rendererReady: () => rendererReady });
 });
 app.on('before-quit', () => {
   for (const [id, job] of jobs) {

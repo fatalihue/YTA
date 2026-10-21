@@ -51,4 +51,7 @@ contextBridge.exposeInMainWorld('yta', {
   dialogNameFree: (folder, name) => ipcRenderer.invoke('dialog-name-free', folder, name),
   openFile: (file) => ipcRenderer.invoke('open-file', file),
   setDownloadPrefs: (patch) => ipcRenderer.invoke('download-prefs-set', patch),
+  onProgressUpdate: (cb) => subscribe('progress-update', cb),
+  itemAction: (action) => ipcRenderer.invoke('item-action', action), // da janela de andamento para a fila
+  onItemAction: (cb) => subscribe('item-action', cb),
 });

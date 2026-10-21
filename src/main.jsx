@@ -18,7 +18,7 @@ reduce.addEventListener('change', sync);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {/* Janelas do acelerador (#ask, #done) usam a mesma página; a principal não tem hash. */}
-    {location.hash === '#ask' || location.hash === '#done' ? <DownloadDialog kind={location.hash.slice(1)} /> : <App />}
+    {/* Janelas do acelerador (#ask, #progress) usam a mesma página; a principal não tem hash. */}
+    {location.hash === '#ask' || location.hash === '#progress' ? <DownloadDialog kind={location.hash.slice(1)} /> : <App />}
   </StrictMode>,
 );
