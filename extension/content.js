@@ -41,9 +41,15 @@
   const isYouTube = /(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname);
   const isInstagram = /(^|\.)instagram\.com$/.test(location.hostname);
 
+  // A prévia que toca ao passar o mouse numa miniatura também é um ytd-player (#inline-preview-player).
+  const YT_PREVIEW = '#inline-preview-player, ytd-video-preview, #video-preview';
+  const YT_LINK = 'a[href*="/watch?v="], a[href*="/shorts/"]';
+
   function youtubeUrl(video, hits) {
+    // Miniatura (o botão fica preso a ela): o link é o dela.
+    if (video.matches?.(YT_LINK)) return new URL(video.getAttribute('href'), location.origin).href;
     // Player principal (página do vídeo ou Shorts): o link é o da própria página.
-    if (video.closest('#movie_player, ytd-player, #shorts-player, ytd-reel-video-renderer')) {
+    if (!video.closest(YT_PREVIEW) && video.closest('#movie_player, ytd-player, #shorts-player, ytd-reel-video-renderer')) {
       const u = new URL(location.href);
       if (u.pathname === '/watch' && u.searchParams.get('v')) return `https://www.youtube.com/watch?v=${u.searchParams.get('v')}`;
       const s = u.pathname.match(/^\/shorts\/([\w-]{11})/);
@@ -53,7 +59,7 @@
       if (e) return `https://www.youtube.com/watch?v=${e[1]}`;
     }
     // Prévia na home/busca: o link da miniatura sob o ponteiro.
-    const a = hits.map((el) => el.closest?.('a[href*="/watch?v="], a[href*="/shorts/"]')).find(Boolean);
+    const a = hits.map((el) => el.closest?.(YT_LINK)).find(Boolean);
     return a ? new URL(a.getAttribute('href'), location.origin).href : null;
   }
 
@@ -143,7 +149,7 @@
 
   /* ---------- Qual vídeo está sob o ponteiro ---------- */
 
-  let video = null; // vídeo atual
+  let video = null; // vídeo atual (no YouTube, pode ser a miniatura: ver targetAt)
   let videoUrl = null;
   let lastHits = []; // elementos sob o ponteiro na última vez (YouTube: link da miniatura)
 
@@ -187,12 +193,13 @@
 
   let ticking = false;
   // Coleção viva: contar os vídeos da página não custa nada. Sem vídeo, o movimento do mouse é
-  // ignorado sem nenhum cálculo (o script roda em todas as páginas e quadros).
+  // ignorado sem nenhum cálculo (o script roda em todas as páginas e quadros). No YouTube as
+  // miniaturas contam como vídeo (a prévia só nasce depois do ponteiro parar).
   const videos = document.getElementsByTagName('video');
   document.addEventListener(
     'pointermove',
     (e) => {
-      if (!videos.length && !video) return;
+      if (!videos.length && !video && !isYouTube) return;
       pointer = { x: e.clientX, y: e.clientY };
       if (ticking) return;
       ticking = true;
@@ -200,7 +207,7 @@
         ticking = false;
         if (e.composedPath().includes(host)) return; // sobre o próprio botão
         const hits = document.elementsFromPoint(pointer.x, pointer.y);
-        const v = hits.find((el) => el.tagName === 'VIDEO') || findVideoBehind(hits);
+        const v = targetAt(hits);
         if (!v || hidden.has(v) || blocked) {
           if (!menuOpen()) {
             video = null;
@@ -220,6 +227,24 @@
     },
     { passive: true },
   );
+  /*
+   * O que está sob o ponteiro. No YouTube, numa miniatura, é a própria miniatura (o link): a
+   * prévia que o YouTube toca por cima dela vai e volta — some quando o ponteiro chega no botão
+   * (o botão cobre a miniatura e o YouTube entende que o mouse saiu) e só nasce depois do ponteiro
+   * parar. Preso à prévia, o botão sumia no caminho até ele; preso à miniatura, fica parado.
+   */
+  function targetAt(hits) {
+    const v = hits.find((el) => el.tagName === 'VIDEO') || findVideoBehind();
+    if (!isYouTube || (v && !v.closest(YT_PREVIEW))) return v; // player principal: o próprio vídeo
+    for (const el of hits) {
+      const a = el.closest?.(YT_LINK);
+      if (!a) continue;
+      const r = a.getBoundingClientRect();
+      if (r.width >= MIN_W && r.height >= MIN_H) return a; // a miniatura (o título é baixo demais)
+    }
+    return v;
+  }
+
   // Sites põem camadas por cima do <video>: procura um vídeo que contenha o ponto.
   function findVideoBehind() {
     for (const v of videos) {

@@ -78,3 +78,7 @@ foco, tipografia ou fazer codemod.
     `profile.default_content_setting_values.automatic_downloads = 1` em `Default/Preferences`.
 24. **Servidor de teste de velocidade pode recusar User-Agent de navegador** (a Hetzner fecha a
     conexão para "Mozilla/…"). Medir com um UA neutro; no app, a captura usa o UA do navegador.
+25. **Botão da extensão no YouTube preso à miniatura, não à prévia.** A prévia ao passar o mouse é
+    outro player (`#inline-preview-player`, também um `ytd-player`) que some quando o botão a cobre (o
+    YouTube entende que o mouse saiu) e só nasce depois do ponteiro parar. Preso ao `<video>` dela, o
+    botão sumia no caminho até ele. Medir no YouTube real (Edge + `--load-extension` + CDP).
