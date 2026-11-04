@@ -182,7 +182,7 @@ export default function App() {
     const offTool = api.onToolStatus(setTool);
     const offJob = api.onJobEvent((e) => {
       if (e.type === 'meta') patch(e.id, { title: e.title, phase: 'download', retry: null });
-      else if (e.type === 'retry') patch(e.id, { phase: 'preparing', progress: {}, retry: e.login ? { login: true } : e.media ? { media: true } : { attempt: e.attempt, max: e.max } });
+      else if (e.type === 'retry') patch(e.id, { phase: 'preparing', progress: {}, retry: e.login ? { login: true } : e.browser ? { browser: true } : e.media ? { media: true } : { attempt: e.attempt, max: e.max } });
       else if (e.type === 'target') patch(e.id, { file: e.file });
       else if (e.type === 'resolution') patch(e.id, { height: e.height });
       else if (e.type === 'progress') {
@@ -282,7 +282,7 @@ export default function App() {
           // Para a janela de andamento (electron/main.cjs > progressUpdate).
           done: it.progress?.done ?? null, size: it.progress?.size ?? null, speed: it.progress?.speed ?? null,
           eta: it.progress?.eta ?? null, conns: it.progress?.conns ?? null, height: it.height || null,
-          files: it.files || null, folder: it.folder || null, pausing: Boolean(it.pausing), retry: Boolean(it.retry),
+          files: it.files || null, folder: it.folder || null, pausing: Boolean(it.pausing), retry: it.retry ? (it.retry.browser ? 'browser' : 'other') : null,
         })),
       );
       const pending = list

@@ -201,22 +201,24 @@ function uniqueFile(folder, name, ext) {
 // tamanho (progresso e tempo restante oscilam) nem a taxa do áudio.
 const NO_HLS = '[protocol!*=m3u8]';
 
+// O último "/best[acodec!=?none]" aceita formato de codec desconhecido: um .mp4 direto (ex.: story do
+// Instagram pego pelo navegador) não informa codecs, e o ffmpeg tira o áudio dele.
 const FORMATS = {
   m4a: {
     // Sem faixa só de áudio (posts do Instagram), usa o arquivo com vídeo e tira o áudio dele.
-    select: `bestaudio[ext=m4a][acodec^=mp4a]${NO_HLS}/bestaudio${NO_HLS}/bestaudio/best[acodec!=none]`,
+    select: `bestaudio[ext=m4a][acodec^=mp4a]${NO_HLS}/bestaudio${NO_HLS}/bestaudio/best[acodec!=none]/best[acodec!=?none]`,
     original: (acodec) => /^mp4a/.test(acodec || ''),
     encode: ['-c:a', 'aac', '-b:a', '192k'],
     muxer: ['-f', 'ipod', '-movflags', '+faststart'],
   },
   opus: {
-    select: `bestaudio[acodec=opus]${NO_HLS}/bestaudio${NO_HLS}/bestaudio/best[acodec!=none]`,
+    select: `bestaudio[acodec=opus]${NO_HLS}/bestaudio${NO_HLS}/bestaudio/best[acodec!=none]/best[acodec!=?none]`,
     original: (acodec) => acodec === 'opus',
     encode: ['-c:a', 'libopus', '-b:a', '160k'],
     muxer: ['-f', 'opus'],
   },
   mp3: {
-    select: `bestaudio${NO_HLS}/bestaudio/best[acodec!=none]`,
+    select: `bestaudio${NO_HLS}/bestaudio/best[acodec!=none]/best[acodec!=?none]`,
     original: () => false,
     encode: (bitrate) => ['-c:a', 'libmp3lame', '-b:a', `${bitrate}k`, '-id3v2_version', '3'],
     muxer: ['-f', 'mp3'],
@@ -241,7 +243,7 @@ function videoSelect(maxHeight) {
 }
 
 /** Etapa 1: yt-dlp baixa o(s) fluxo(s) para uma pasta de trabalho. */
-function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, referer) {
+function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, referer, title = null) {
   const video = format === 'video';
   // Capa: o Opus (Ogg) não guarda imagem pelo ffmpeg, então só M4A e MP3 pedem a miniatura.
   const cover = format === 'm4a' || format === 'mp3';
@@ -268,9 +270,11 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
       ? ['-S', VIDEO_SORT, '-f', siteOf(url) === 'instagram' ? instagramVideoSelect(maxHeight) : videoSelect(maxHeight)]
       : ['-f', FORMATS[format].select]),
     '--ffmpeg-location', ffmpegPath,
-    '-o', path.join(workDir, '%(id)s.%(format_id)s.%(ext)s'),
+    // ID cortado em 64 bytes: num .mp4 direto ele é o nome do arquivo no CDN, com a query assinada,
+    // e o caminho passava do limite do Windows ("Invalid argument").
+    '-o', path.join(workDir, '%(id).64B.%(format_id).32B.%(ext)s'),
     ...(cover
-      ? ['--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', `thumbnail:${path.join(workDir, '%(id)s.thumb.%(ext)s')}`]
+      ? ['--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', `thumbnail:${path.join(workDir, '%(id).64B.thumb.%(ext)s')}`]
       : []),
     '--progress-template',
     'download:YTA_PROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s',
@@ -314,7 +318,7 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
         };
         if (!meta) {
           meta = m;
-          send('job-event', { id, type: 'meta', title: m.title || null, duration: num(m.duration) });
+          send('job-event', { id, type: 'meta', title: title || m.title || null, duration: num(m.duration) });
         }
         // Em vídeo, cada fluxo tem a sua barra: "Baixando vídeo" e depois "Baixando áudio".
         const part = !video ? null : current.hasVideo ? 'video' : 'audio';
@@ -516,7 +520,7 @@ async function plan(format, bitrate, streams, meta, compat, cover) {
 
 /** Miniatura baixada para este item (só existe nos formatos com capa e quando o site tem uma). */
 function coverFor(workDir, meta) {
-  const file = path.join(workDir, `${meta.id}.thumb.jpg`);
+  const file = path.join(workDir, `${Buffer.from(String(meta.id)).subarray(0, 64).toString()}.thumb.jpg`); // como o %(id).64B
   return fs.existsSync(file) ? file : null;
 }
 
@@ -542,10 +546,11 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
     let withLogin = false; // o login só entra quando o site exige
     let source = url; // a página; o arquivo de vídeo detectado pela extensão é o plano B
     let usedMedia = false;
+    let mediaTitle = null; // nome do item quando o arquivo direto veio do navegador (story)
     const site = siteOf(url);
     for (let attempt = 1; ; attempt++) {
       try {
-        fetched = await fetchStreams(job, id, source, workDir, format, maxHeight, withLogin, usedMedia ? referer || url : null);
+        fetched = await fetchStreams(job, id, source, workDir, format, maxHeight, withLogin, usedMedia ? referer || url : null, mediaTitle);
         break;
       } catch (err) {
         if (!usedMedia && mediaUrl && /^https?:/i.test(mediaUrl) && NOT_FOUND.test(err.stderr || err.message)) {
@@ -555,6 +560,19 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
           attempt--;
           send('job-event', { id, type: 'retry', media: true });
           continue;
+        }
+        if (err.needsLogin && !usedMedia && site === 'instagram' && INSTAGRAM_STORY.test(url) && isLoggedIn(site)) {
+          // Story: os cookies não valem fora do navegador; o navegador do YTA pega o vídeo.
+          send('job-event', { id, type: 'retry', browser: true });
+          const story = await instagramStoryMedia(url).catch(() => null);
+          if (job.cancelled) throw new Cancelled();
+          if (story) {
+            usedMedia = true;
+            source = story.mediaUrl;
+            mediaTitle = story.title;
+            attempt--;
+            continue;
+          }
         }
         if (err.needsLogin && !withLogin && isLoggedIn(site)) {
           withLogin = true;
@@ -575,7 +593,7 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
     const files = [];
     for (const { streams, meta } of fetched.entries) {
       // Arquivo direto (ex.: master.m3u8) não tem título: usa o da página.
-      if (usedMedia && title) Object.assign(meta, { title, extractor: 'generic' });
+      if (usedMedia && (mediaTitle || title)) Object.assign(meta, { title: mediaTitle || title, extractor: 'generic' });
       if (job.cancelled) throw new Cancelled();
       out = uniqueFile(folder, safeName(`${prefix || ''}${fileTitle(meta)}`), ext);
       reserved.add(out.toLowerCase());
@@ -1193,7 +1211,24 @@ const hasDomainCookies = (cookies, site) =>
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Abre o perfil invisível, (opcionalmente) visita o YouTube e devolve todos os cookies. */
-async function readBrowserCookies(exe, { visit = null } = {}) {
+function readBrowserCookies(exe, { visit = null } = {}) {
+  return withLoginBrowser(exe, async (call) => {
+    if (visit) {
+      // Visita o YouTube para o navegador renovar a sessão antes de entregar os cookies.
+      await call('Target.createTarget', { url: visit });
+      await sleep(3500);
+    }
+    const res = await call('Storage.getCookies');
+    return res.result?.cookies || [];
+  });
+}
+
+/**
+ * Perfil de login aberto invisível, com depuração (CDP): `fn(call)` conversa com ele;
+ * call(método, parâmetros, sessionId) — sessionId para falar com uma aba (Target.attachToTarget).
+ * Fecha o navegador de forma limpa no fim (o perfil grava o que renovou).
+ */
+async function withLoginBrowser(exe, fn) {
   const portFile = path.join(loginProfile, 'DevToolsActivePort');
   fs.rmSync(portFile, { force: true });
   const child = spawn(exe, [
@@ -1225,25 +1260,66 @@ async function readBrowserCookies(exe, { visit = null } = {}) {
         pending.delete(msg.id);
       }
     });
-    const call = (method, params = {}) =>
+    const call = (method, params = {}, sessionId) =>
       new Promise((resolve, reject) => {
         const id = ++seq;
         pending.set(id, resolve);
-        ws.send(JSON.stringify({ id, method, params }));
+        ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
         setTimeout(() => pending.delete(id) && reject(new Error('O navegador do login não respondeu.')), 15_000);
       });
-    if (visit) {
-      // Visita o YouTube para o navegador renovar a sessão antes de entregar os cookies.
-      await call('Target.createTarget', { url: visit });
-      await sleep(3500);
-    }
-    const res = await call('Storage.getCookies');
+    const out = await fn(call);
     await call('Browser.close'); // saída limpa: o perfil grava o que renovou
     await Promise.race([new Promise((r) => (child.exitCode !== null ? r() : child.once('exit', r))), sleep(10_000)]);
-    return res.result?.cookies || [];
+    return out;
   } finally {
     if (isAlive(child)) killTree(child.pid);
   }
+}
+
+/*
+ * Story do Instagram pelo navegador do YTA. Desde nov/2026 o Instagram só aceita a sessão dentro
+ * do navegador: os mesmos cookies, usados pelo yt-dlp (ou qualquer programa), contam como visitante
+ * deslogado — a API devolve a lista de stories vazia ("You need to log in"). Aberto no perfil de
+ * login (logado), a página do story já traz o .mp4 embutido (video_versions, com áudio); o
+ * endereço é assinado e baixa sem cookies. Story de foto não tem vídeo: segue o erro de sempre.
+ */
+const INSTAGRAM_STORY = /instagram\.com\/stories\/([\w.-]+)\/(\d+)/;
+const STORY_MEDIA_JS = (storyId) => `(() => {
+  for (const s of document.querySelectorAll('script[type="application/json"]')) {
+    const t = s.textContent;
+    if (!t.includes('${storyId}') || !t.includes('video_versions')) continue;
+    let found = null;
+    const walk = (o, d) => {
+      if (found || !o || typeof o !== 'object' || d > 80) return;
+      if (String(o.pk) === '${storyId}' && o.video_versions && o.video_versions.length) return void (found = o.video_versions[0].url);
+      for (const v of Array.isArray(o) ? o : Object.values(o)) walk(v, d + 1);
+    };
+    try { walk(JSON.parse(t), 0); } catch {}
+    if (found) return found;
+  }
+  return null;
+})()`;
+function instagramStoryMedia(url) {
+  const m = url.match(INSTAGRAM_STORY);
+  if (!m || m[1] === 'highlights') return Promise.resolve(null);
+  const [, user, storyId] = m;
+  const exe = loginInfo()?.exe || findBrowser()?.exe;
+  if (!exe || !fs.existsSync(exe)) return Promise.resolve(null);
+  const run = browserBusy.then(() =>
+    withLoginBrowser(exe, async (call) => {
+      const tab = await call('Target.createTarget', { url });
+      const att = await call('Target.attachToTarget', { targetId: tab.result.targetId, flatten: true });
+      for (let i = 0; i < 30; i++) {
+        await sleep(500); // a página carrega; os dados vêm no próprio HTML
+        const r = await call('Runtime.evaluate', { expression: STORY_MEDIA_JS(storyId), returnByValue: true }, att.result.sessionId);
+        const media = r.result?.result?.value;
+        if (typeof media === 'string' && /^https:\/\//.test(media)) return { mediaUrl: media, title: `${user} - ${storyId}` };
+      }
+      return null;
+    }),
+  );
+  browserBusy = run.catch(() => {});
+  return run;
 }
 
 /** Grava os cookies do perfil do YTA (só tem os sites em que você entrou) no formato do yt-dlp. */

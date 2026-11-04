@@ -82,3 +82,10 @@ foco, tipografia ou fazer codemod.
     outro player (`#inline-preview-player`, também um `ytd-player`) que some quando o botão a cobre (o
     YouTube entende que o mouse saiu) e só nasce depois do ponteiro parar. Preso ao `<video>` dela, o
     botão sumia no caminho até ele. Medir no YouTube real (Edge + `--load-extension` + CDP).
+26. **Instagram (nov/2026): cookies não valem fora do navegador.** Copiados do perfil (CDP) para o
+    yt-dlp/Node, a sessão conta como deslogada (`USER_ID` 0, `reels_tray` vazio) — "You need to log
+    in" mesmo com sessionid válido. Pegar o conteúdo DENTRO do navegador logado (a página do story
+    traz `video_versions` no HTML) e baixar o .mp4 assinado, que não exige cookies.
+27. **yt-dlp com arquivo direto de CDN:** o ID vira o nome do arquivo com a query assinada; no
+    template use `%(id).64B` (caminho > 260 no Windows dá "Invalid argument"). E `[acodec!=none]`
+    descarta codec desconhecido — o .mp4 direto não informa codec; `[acodec!=?none]` aceita.

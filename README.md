@@ -189,6 +189,13 @@ baixam o destaque inteiro: o endereço é do destaque, não do item, e o botão 
 inteiro"). Um link sem número (`/stories/conta/`) baixa todos os stories atuais da conta. Baixar
 um story conta como visualização sua.
 
+**Stories pelo navegador do YTA:** o Instagram passou a aceitar a sessão só dentro do navegador
+(os mesmos cookies, usados pelo yt-dlp, contam como visitante deslogado e a lista de stories volta
+vazia). Quando o yt-dlp recusa um story por login, o YTA abre o story invisível no perfil de login
+dele, pega o vídeo que a página traz embutido e baixa direto dele ("Pegando o story pelo navegador
+do YTA…"). Story compartilhado com você (`?dlrf=…`) leva o passe junto. Story de foto e destaques
+ainda dependem do yt-dlp.
+
 ## Login
 
 Às vezes o YouTube pede "confirme que você não é um robô" (comum depois de muitos downloads seguidos

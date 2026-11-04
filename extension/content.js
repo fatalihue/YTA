@@ -67,7 +67,11 @@
     // Stories e destaques: tela própria, sem post em volta; o link é o da página
     // (/stories/conta/123…/ ou /stories/highlights/123…/). Exigem login no YTA.
     const story = location.pathname.match(/^\/stories\/[\w.-]+(?:\/\d+)?/);
-    if (story) return `https://www.instagram.com${story[0]}/`;
+    if (story) {
+      // Story compartilhado com você: o passe (?dlrf=…) libera o story de conta privada.
+      const pass = new URLSearchParams(location.search).get('dlrf');
+      return `https://www.instagram.com${story[0]}/${pass ? `?dlrf=${encodeURIComponent(pass)}` : ''}`;
+    }
     const post = video.closest('article, [role="dialog"], main');
     const a = post?.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
     const own = location.pathname.match(/^\/(p|reels?|tv)\/[\w-]+/);
