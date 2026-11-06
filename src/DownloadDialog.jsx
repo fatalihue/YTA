@@ -34,7 +34,7 @@ function phaseText(it) {
     case 'queued':
       return 'Na fila';
     case 'preparing':
-      return it.kind === 'file' ? 'Conectando…' : it.retry === 'browser' ? 'Pegando o story pelo navegador…' : it.retry ? 'Tentando de novo…' : 'Buscando o vídeo…';
+      return it.kind === 'file' ? 'Conectando…' : it.retry === 'browser' ? 'Buscando com o login do YTA…' : it.retry ? 'Tentando de novo…' : 'Buscando o vídeo…';
     case 'download':
       return it.part === 'video' ? 'Baixando vídeo' : it.part === 'audio' ? 'Baixando áudio' : 'Baixando';
     case 'convert':

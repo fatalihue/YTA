@@ -72,7 +72,7 @@ function QueueItemView({ item, onCancel, onRetry, onRemove, onReveal, onLogin, o
       : item.phase === 'preparing' && item.kind === 'file'
       ? { ...base, text: 'Conectando…' }
       : item.phase === 'preparing' && item.retry?.browser
-      ? { ...base, text: 'Pegando o story pelo navegador do YTA…' }
+      ? { ...base, text: 'Buscando com o login do YTA…' }
       : item.phase === 'preparing' && item.retry?.media
       ? { ...base, text: 'Página não reconhecida; baixando o vídeo que ela tocava…' }
       : item.phase === 'preparing' && item.retry?.login

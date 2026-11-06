@@ -546,11 +546,13 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
     let withLogin = false; // o login só entra quando o site exige
     let source = url; // a página; o arquivo de vídeo detectado pela extensão é o plano B
     let usedMedia = false;
-    let mediaTitle = null; // nome do item quando o arquivo direto veio do navegador (story)
+    let igItems = null; // Instagram: o que o yt-dlp não conseguiu (ver instagramMedia)
     const site = siteOf(url);
     for (let attempt = 1; ; attempt++) {
       try {
-        fetched = await fetchStreams(job, id, source, workDir, format, maxHeight, withLogin, usedMedia ? referer || url : null, mediaTitle);
+        fetched = igItems
+          ? await fetchInstagramItems(job, id, igItems, workDir, format, maxHeight)
+          : await fetchStreams(job, id, source, workDir, format, maxHeight, withLogin, usedMedia ? referer || url : null);
         break;
       } catch (err) {
         if (!usedMedia && mediaUrl && /^https?:/i.test(mediaUrl) && NOT_FOUND.test(err.stderr || err.message)) {
@@ -561,15 +563,13 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
           send('job-event', { id, type: 'retry', media: true });
           continue;
         }
-        if (err.needsLogin && !usedMedia && site === 'instagram' && INSTAGRAM_STORY.test(url) && isLoggedIn(site)) {
-          // Story: os cookies não valem fora do navegador; o navegador do YTA pega o vídeo.
+        if (!igItems && site === 'instagram' && isLoggedIn(site) && (err.needsLogin || /no video formats|no video in this post/i.test(err.stderr || ''))) {
+          // Story, destaque, carrossel com foto ou foto: o YTA busca direto, com o login dele.
           send('job-event', { id, type: 'retry', browser: true });
-          const story = await instagramStoryMedia(url).catch(() => null);
+          const items = pickInstagramItems(await instagramMedia(url).catch(() => []), format);
           if (job.cancelled) throw new Cancelled();
-          if (story) {
-            usedMedia = true;
-            source = story.mediaUrl;
-            mediaTitle = story.title;
+          if (items.length) {
+            igItems = items;
             attempt--;
             continue;
           }
@@ -593,7 +593,7 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
     const files = [];
     for (const { streams, meta } of fetched.entries) {
       // Arquivo direto (ex.: master.m3u8) não tem título: usa o da página.
-      if (usedMedia && (mediaTitle || title)) Object.assign(meta, { title: mediaTitle || title, extractor: 'generic' });
+      if (usedMedia && title) Object.assign(meta, { title, extractor: 'generic' });
       if (job.cancelled) throw new Cancelled();
       out = uniqueFile(folder, safeName(`${prefix || ''}${fileTitle(meta)}`), ext);
       reserved.add(out.toLowerCase());
@@ -603,7 +603,15 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
       files.push(out);
       out = null;
     }
-    addHistory({ uid: safeUid, key, url, title: fetched.entries[0] ? fileTitle(fetched.entries[0].meta) : title || null, format, files });
+    // Fotos do Instagram: só copia para a pasta (nada a converter).
+    for (const img of fetched.images || []) {
+      if (job.cancelled) throw new Cancelled();
+      const dest = uniqueFile(folder, safeName(`${prefix || ''}${img.title}`), img.ext);
+      await fs.promises.copyFile(img.file, dest);
+      files.push(dest);
+    }
+    const firstTitle = fetched.entries[0] ? fileTitle(fetched.entries[0].meta) : fetched.images?.[0]?.title;
+    addHistory({ uid: safeUid, key, url, title: firstTitle || title || null, format, files });
     return { ok: true, file: files[0], files };
   } catch (err) {
     if (out) fs.rmSync(`${out}.part`, { force: true });
@@ -1277,32 +1285,95 @@ async function withLoginBrowser(exe, fn) {
 }
 
 /*
- * Story do Instagram pelo navegador do YTA. Desde nov/2026 o Instagram só aceita a sessão dentro
- * do navegador: os mesmos cookies, usados pelo yt-dlp (ou qualquer programa), contam como visitante
- * deslogado — a API devolve a lista de stories vazia ("You need to log in"). Aberto no perfil de
- * login (logado), a página do story já traz o .mp4 embutido (video_versions, com áudio); o
- * endereço é assinado e baixa sem cookies. Story de foto não tem vídeo: segue o erro de sempre.
+ * Instagram sem o yt-dlp, para o que ele não consegue (medido em nov/2026):
+ * - a API de stories que ele usa (feed/reels_media) quebrou: vem vazia, ou erro 500 mesmo de dentro
+ *   do navegador — stories e destaques falham com "You need to log in" apesar do login válido;
+ * - num carrossel com foto e vídeo ele para na 1ª foto ("No video formats found"); foto não baixa.
+ * Com id (story, post, reel, carrossel): API de item (media/ID/info) com os cookies do login.
+ * Destaque e "todos os stories da conta": a lista vem embutida na página, no navegador do YTA,
+ * que é também o plano B do story que a API recuse (compartilhado, com o passe ?dlrf=…). O YTA não
+ * clica em "Ver story". Os arquivos têm endereço assinado e baixam sem cookies.
  */
-const INSTAGRAM_STORY = /instagram\.com\/stories\/([\w.-]+)\/(\d+)/;
-const STORY_MEDIA_JS = (storyId) => `(() => {
-  for (const s of document.querySelectorAll('script[type="application/json"]')) {
-    const t = s.textContent;
-    if (!t.includes('${storyId}') || !t.includes('video_versions')) continue;
-    let found = null;
-    const walk = (o, d) => {
-      if (found || !o || typeof o !== 'object' || d > 80) return;
-      if (String(o.pk) === '${storyId}' && o.video_versions && o.video_versions.length) return void (found = o.video_versions[0].url);
-      for (const v of Array.isArray(o) ? o : Object.values(o)) walk(v, d + 1);
-    };
-    try { walk(JSON.parse(t), 0); } catch {}
-    if (found) return found;
-  }
+function instagramTarget(url) {
+  let m;
+  if ((m = url.match(/instagram\.com\/stories\/highlights\/(\d+)/))) return { highlight: m[1] };
+  if ((m = url.match(/instagram\.com\/stories\/([\w.-]+)\/(\d+)/))) return { user: m[1], pk: m[2] };
+  if ((m = url.match(/instagram\.com\/stories\/([\w.-]+)\/?(?:[?#]|$)/))) return { user: m[1] };
+  if ((m = url.match(/instagram\.com\/(?:[\w.-]+\/)?(?:p|reels?|tv)\/([\w-]+)/))) return { code: m[1] };
   return null;
+}
+/** Código do post → id. Só os 11 primeiros contam (post privado tem código mais longo). */
+function shortcodeToId(code) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let n = 0n;
+  for (const c of code.slice(0, 11)) n = n * 64n + BigInt(alphabet.indexOf(c));
+  return n.toString();
+}
+/** Um item da API/página → { type, url, hasAudio, id, owner } (null se ainda não há arquivo). */
+function instagramItem(raw, owner, useCode) {
+  const name = raw.user?.username || raw.owner?.username || owner || 'instagram';
+  const id = String((useCode && raw.code) || raw.pk);
+  const video = raw.video_versions?.[0]?.url;
+  if (video) return { type: 'video', url: video, hasAudio: raw.has_audio !== false, id, owner: name };
+  const image = raw.image_versions2?.candidates?.[0]?.url;
+  return raw.media_type === 1 && image ? { type: 'image', url: image, id, owner: name } : null;
+}
+/** Item com filhos (carrossel) → os filhos; os demais → ele mesmo. */
+function instagramItems(raw, owner, useCode) {
+  const name = raw.user?.username || raw.owner?.username || owner;
+  if (!raw.carousel_media?.length) return [instagramItem(raw, name, useCode)].filter(Boolean);
+  // Carrossel: "conta - código-1", "-2"… na ordem do post (os filhos não têm código próprio).
+  return raw.carousel_media
+    .map((x, i) => {
+      const it = instagramItem(x, name, false);
+      return it && (raw.code ? { ...it, id: `${raw.code}-${i + 1}` } : it);
+    })
+    .filter(Boolean);
+}
+
+/** media/ID/info com os cookies do login. */
+async function instagramApi(pk) {
+  const rows = fs.readFileSync(cookiesFile, 'utf8').split(/\r?\n/).filter((l) => l && !l.startsWith('#')).map((l) => l.split('\t')).filter((c) => /instagram\.com$/.test(c[0]));
+  const res = await fetch(`https://www.instagram.com/api/v1/media/${pk}/info/`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+      Cookie: rows.map((c) => `${c[5]}=${c[6]}`).join('; '),
+      'X-CSRFToken': rows.find((c) => c[5] === 'csrftoken')?.[6] || '',
+      'X-IG-App-ID': '936619743392459',
+      'X-Requested-With': 'XMLHttpRequest',
+      Referer: 'https://www.instagram.com/',
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json = await res.json().catch(() => ({}));
+  return json.items?.[0] || null;
+}
+
+/** Roda na página: os itens do alvo, nos JSON embutidos. Nada se o vídeo ainda não veio. */
+const INSTAGRAM_PAGE_JS = (target) => `(() => {
+  const t = ${JSON.stringify(target)};
+  const scripts = [...document.querySelectorAll('script[type="application/json"]')].filter((s) => s.textContent.includes('image_versions2'));
+  let found = null;
+  const walk = (o, d) => {
+    if (found || !o || typeof o !== 'object' || d > 80) return;
+    if (t.pk && String(o.pk) === t.pk && ((o.video_versions && o.video_versions.length) || o.media_type === 1)) return void (found = [o]);
+    if (!t.pk && Array.isArray(o.items) && o.items.some((i) => i && i.pk)) {
+      if (t.highlight ? String(o.id).includes(t.highlight) : o.user && o.user.username === t.user) return void (found = o.items);
+    }
+    for (const v of Array.isArray(o) ? o : Object.values(o)) walk(v, d + 1);
+  };
+  for (const s of scripts) {
+    try { walk(JSON.parse(s.textContent), 0); } catch {}
+    if (found) break;
+  }
+  return found && found.map((i) => ({
+    pk: String(i.pk), code: i.code, media_type: i.media_type, has_audio: i.has_audio,
+    user: (i.user && i.user.username) ? { username: i.user.username } : null,
+    video_versions: i.video_versions && i.video_versions.length ? [{ url: i.video_versions[0].url }] : null,
+    image_versions2: i.image_versions2 && i.image_versions2.candidates && i.image_versions2.candidates.length ? { candidates: [{ url: i.image_versions2.candidates[0].url }] } : null,
+  }));
 })()`;
-function instagramStoryMedia(url) {
-  const m = url.match(INSTAGRAM_STORY);
-  if (!m || m[1] === 'highlights') return Promise.resolve(null);
-  const [, user, storyId] = m;
+function instagramFromBrowser(url, target) {
   const exe = loginInfo()?.exe || findBrowser()?.exe;
   if (!exe || !fs.existsSync(exe)) return Promise.resolve(null);
   const run = browserBusy.then(() =>
@@ -1311,15 +1382,84 @@ function instagramStoryMedia(url) {
       const att = await call('Target.attachToTarget', { targetId: tab.result.targetId, flatten: true });
       for (let i = 0; i < 30; i++) {
         await sleep(500); // a página carrega; os dados vêm no próprio HTML
-        const r = await call('Runtime.evaluate', { expression: STORY_MEDIA_JS(storyId), returnByValue: true }, att.result.sessionId);
-        const media = r.result?.result?.value;
-        if (typeof media === 'string' && /^https:\/\//.test(media)) return { mediaUrl: media, title: `${user} - ${storyId}` };
+        const r = await call('Runtime.evaluate', { expression: INSTAGRAM_PAGE_JS(target), returnByValue: true }, att.result.sessionId);
+        if (Array.isArray(r.result?.result?.value)) return r.result.result.value;
       }
       return null;
     }),
   );
   browserBusy = run.catch(() => {});
   return run;
+}
+
+/** Tudo o que o link tem: [{ type: 'video'|'image', url, hasAudio, id, owner }]. */
+async function instagramMedia(url) {
+  const target = instagramTarget(url);
+  if (!target) return [];
+  const pk = target.pk || (target.code && shortcodeToId(target.code));
+  if (pk) {
+    await freshCookies('instagram').catch(() => {}); // sem renovar, tenta com os que há
+    const raw = await instagramApi(pk).catch(() => null);
+    const items = raw ? instagramItems(raw, target.user, Boolean(target.code)) : [];
+    if (items.length) return items;
+    if (target.code) return []; // post: a página não traz o item de forma confiável
+  }
+  const raws = await instagramFromBrowser(url, target);
+  return (raws || []).flatMap((raw) => instagramItems(raw, target.user, false));
+}
+
+/** Em "Vídeo", tudo; em áudio, os vídeos com som — e, se o link só tem fotos, as fotos. */
+function pickInstagramItems(items, format) {
+  if (format === 'video') return items;
+  const withAudio = items.filter((it) => it.type === 'video' && it.hasAudio);
+  if (withAudio.length) return withAudio;
+  return items.some((it) => it.type === 'video') ? [] : items;
+}
+
+/**
+ * Baixa os itens para a pasta de trabalho (a gravação final é depois, como nos vídeos). Foto já
+ * baixada não vem de novo ao retomar; vídeo retoma do .part.
+ */
+async function fetchInstagramItems(job, id, items, workDir, format, maxHeight) {
+  const entries = [];
+  const images = [];
+  for (const [i, it] of items.entries()) {
+    if (job.cancelled) throw new Cancelled();
+    const title = `${it.owner} - ${it.id}`;
+    const shown = items.length > 1 ? `${title} (${i + 1} de ${items.length})` : title;
+    if (it.type === 'video') {
+      const got = await fetchStreams(job, id, it.url, workDir, format, maxHeight, false, 'https://www.instagram.com/', shown);
+      for (const e of got.entries) {
+        Object.assign(e.meta, { title, extractor: 'generic' });
+        entries.push(e);
+      }
+      continue;
+    }
+    const ext = (new URL(it.url).pathname.match(/\.(jpe?g|png|webp|heic)$/i) || [])[1]?.toLowerCase() || 'jpg';
+    const file = path.join(workDir, `${safeName(it.id)}.${ext}`);
+    send('job-event', { id, type: 'meta', title: shown, duration: null });
+    send('job-event', { id, type: 'progress', stage: 'download', percent: (i / items.length) * 100, done: null, size: null, speed: null, eta: null });
+    if (!fs.existsSync(file)) {
+      const ctrl = new AbortController();
+      job.abort = () => ctrl.abort();
+      let data;
+      try {
+        const res = await fetch(it.url, { signal: ctrl.signal });
+        if (!res.ok) throw Object.assign(new Error(`O Instagram recusou a foto (${res.status}).`), { refused: true });
+        data = Buffer.from(await res.arrayBuffer());
+      } catch (err) {
+        if (job.cancelled) throw new Cancelled();
+        if (err.refused) throw err;
+        throw Object.assign(new Error('Sem conexão. Verifique a internet.'), { retryable: true });
+      } finally {
+        job.abort = null;
+      }
+      fs.writeFileSync(`${file}.tmp`, data);
+      fs.renameSync(`${file}.tmp`, file);
+    }
+    images.push({ file, ext, title });
+  }
+  return { entries, images };
 }
 
 /** Grava os cookies do perfil do YTA (só tem os sites em que você entrou) no formato do yt-dlp. */

@@ -179,22 +179,26 @@ título da página — o mesmo truque do IDM.
 
 Aceita links de posts, reels, IGTV e stories. O arquivo sai como "conta - código do post" (o título
 que o Instagram dá é genérico) e a primeira linha da legenda vira o título nos metadados. Um
-carrossel com vários vídeos vira um arquivo por vídeo. No vídeo, o app prefere a versão H.264 do
+carrossel vira um arquivo por item. No vídeo, o app prefere a versão H.264 do
 Instagram (compatível com o WhatsApp), mesmo quando existe uma de resolução maior em VP9. O
 Instagram exige login para muita coisa (stories sempre) e bloqueia quem baixa demais em sequência.
 
 **Stories:** o link de um story (`/stories/conta/123…/`) baixa só aquele story; o botão da extensão
 segue o story que está na tela ao passar para o próximo. **Destaques** (`/stories/highlights/…`)
 baixam o destaque inteiro: o endereço é do destaque, não do item, e o botão avisa ("Baixar destaque
-inteiro"). Um link sem número (`/stories/conta/`) baixa todos os stories atuais da conta. Baixar
-um story conta como visualização sua.
+inteiro"). Um link sem número (`/stories/conta/`) baixa todos os stories atuais da conta. O YTA não clica
+em "Ver story", mas não dá para garantir que o Instagram não conte o acesso como visualização.
 
-**Stories pelo navegador do YTA:** o Instagram passou a aceitar a sessão só dentro do navegador
-(os mesmos cookies, usados pelo yt-dlp, contam como visitante deslogado e a lista de stories volta
-vazia). Quando o yt-dlp recusa um story por login, o YTA abre o story invisível no perfil de login
-dele, pega o vídeo que a página traz embutido e baixa direto dele ("Pegando o story pelo navegador
-do YTA…"). Story compartilhado com você (`?dlrf=…`) leva o passe junto. Story de foto e destaques
-ainda dependem do yt-dlp.
+**Quando o yt-dlp não consegue:** a API de stories que ele usa parou de responder, e num carrossel
+com foto e vídeo ele para na primeira foto. Nesses casos, com a conta conectada no YTA, ele busca
+direto ("Buscando com o login do YTA…"): com id (story, post, reel, carrossel), pela API de item,
+com os cookies do login; destaque e "todos os stories da conta", pela página aberta invisível no
+perfil de login do YTA, que é também o plano B do story compartilhado com você (`?dlrf=…`, que vai
+junto). Sem a conta conectada, esses casos seguem pedindo login.
+
+**Fotos:** no formato Vídeo, um carrossel salva vídeos e fotos (.jpg), como "conta - código-1",
+"-2"… na ordem do post. Num formato de áudio, salva o áudio dos vídeos; se o link só tem fotos
+(story de foto, post de foto), salva as fotos.
 
 ## Login
 

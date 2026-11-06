@@ -82,10 +82,14 @@ foco, tipografia ou fazer codemod.
     outro player (`#inline-preview-player`, também um `ytd-player`) que some quando o botão a cobre (o
     YouTube entende que o mouse saiu) e só nasce depois do ponteiro parar. Preso ao `<video>` dela, o
     botão sumia no caminho até ele. Medir no YouTube real (Edge + `--load-extension` + CDP).
-26. **Instagram (nov/2026): cookies não valem fora do navegador.** Copiados do perfil (CDP) para o
-    yt-dlp/Node, a sessão conta como deslogada (`USER_ID` 0, `reels_tray` vazio) — "You need to log
-    in" mesmo com sessionid válido. Pegar o conteúdo DENTRO do navegador logado (a página do story
-    traz `video_versions` no HTML) e baixar o .mp4 assinado, que não exige cookies.
+26. **Instagram (nov/2026): o que quebrou é a API de stories, não os cookies.** `feed/reels_media`
+    responde vazia fora do navegador e 500 dentro dele, e o yt-dlp traduz como "You need to log in".
+    `media/ID/info` com os mesmos cookies funciona (story, post, foto, carrossel); destaque só pela
+    página logada (`items` do reel no JSON embutido). Erro de diagnóstico que custou uma release com
+    a explicação errada: a página inicial sem cabeçalhos de navegador vem "deslogada" (`USER_ID` 0)
+    mesmo com sessão válida. Para saber se um login vale, chamar uma API que exija login.
 27. **yt-dlp com arquivo direto de CDN:** o ID vira o nome do arquivo com a query assinada; no
     template use `%(id).64B` (caminho > 260 no Windows dá "Invalid argument"). E `[acodec!=none]`
     descarta codec desconhecido — o .mp4 direto não informa codec; `[acodec!=?none]` aceita.
+28. **yt-dlp em carrossel do Instagram com foto:** lista os vídeos e termina com erro na 1ª foto
+    ("No video formats found"), derrubando o item inteiro. Testar carrossel misto, não só de vídeo.
