@@ -39,9 +39,19 @@ async function ping() {
   const r = await call('/ping');
   if (r?.app === 'YTA') {
     checkVersion(r.version);
+    migrateCapture();
     return { ok: true, version: r.version };
   }
   return { ok: false };
+}
+
+/* Até a 1.8 a chave "Acelerar downloads" morava aqui (storage.sync). Na 2.0 ela é do YTA (Ajustes,
+ * bandeja e este popup mostram a mesma): quem tinha desligado leva a escolha para o app, uma vez. */
+async function migrateCapture() {
+  const { capture } = await chrome.storage.sync.get('capture');
+  if (capture === undefined) return;
+  if (capture === false && !(await call('/settings', { method: 'POST', body: { capture: false } }))) return; // tenta de novo depois
+  await chrome.storage.sync.remove('capture');
 }
 
 /* ---------- Arquivos de vídeo que cada aba carrega (o truque do IDM) ----------
@@ -133,11 +143,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return call('/reveal', { method: 'POST', body: { id: msg.id } });
       case 'show':
         return call('/show', { method: 'POST', body: {} });
-      // Janelas do acelerador (ficam no app): perguntar onde salvar, avisar ao concluir.
+      // Chaves do acelerador (ficam no app): acelerar, perguntar onde salvar, mostrar andamento.
       case 'settings-get':
         return call('/settings');
       case 'settings-set':
         return call('/settings', { method: 'POST', body: msg.patch });
+      // O que está baixando agora (popup).
+      case 'items':
+        return call('/items');
       default:
         return null;
     }
@@ -176,8 +189,13 @@ async function offerToYta(item) {
   if (item.byExtensionId || item.incognito) return false;
   const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize;
   if (size > 0 && size < CAPTURE_MIN) return false;
-  const { capture = true } = await chrome.storage.sync.get('capture');
-  if (!capture) return false;
+  const { capture } = await chrome.storage.sync.get('capture');
+  if (capture === false) {
+    await migrateCapture();
+    return false; // escolha antiga ainda não levada ao app: respeita
+  }
+  // A chave mora no YTA: desligada (ou YTA fechado), nem junta os cookies — o navegador segue sozinho.
+  if (!(await call('/settings'))?.capture) return false;
   const body = {
     url: item.url, // o original identifica o item (o final costuma ser assinado e temporário)
     finalUrl: item.finalUrl || null,
@@ -203,8 +221,18 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   return true; // nome decidido depois (o download espera)
 });
 
+/* "Extensão conectada" no YTA quer dizer "falou com o app há pouco": um ping por minuto mantém isso
+ * verdadeiro enquanto o navegador está aberto (o serviço de fundo dorme; o alarme o acorda). */
+// Criar só se não existe: recriar a cada despertar reiniciaria a contagem (e ele nunca tocaria).
+chrome.alarms.get('yta-ping').then((a) => a || chrome.alarms.create('yta-ping', { periodInMinutes: 1 }));
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'yta-ping') ping();
+});
+chrome.runtime.onStartup.addListener(() => ping());
+
 /* Clique direito: "Baixar com o YTA" em links, páginas e vídeos, com a última escolha. */
 chrome.runtime.onInstalled.addListener(() => {
+  ping();
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: 'yta-link', title: 'Baixar com o YTA', contexts: ['link'] });
     chrome.contextMenus.create({ id: 'yta-page', title: 'Baixar esta página com o YTA', contexts: ['page', 'video'] });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, safeStorage, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, execFile } = require('node:child_process');
@@ -9,12 +9,20 @@ const accel = require('./accel.cjs');
 // Em pacote, o binário do ffmpeg-static fica fora do asar.
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
 
+// Testes automáticos: perfil isolado (nunca no app instalado) — histórico, fila, ajustes e o
+// localStorage à parte do usuário. O Electron não lê o APPDATA do ambiente; tem de ser aqui,
+// antes de qualquer caminho de userData e antes do "ready".
+if (!app.isPackaged && process.env.YTA_TEST_USERDATA) app.setPath('userData', process.env.YTA_TEST_USERDATA);
+
 const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
 const binDir = path.join(app.getPath('userData'), 'bin');
 const ytdlpPath = path.join(binDir, 'yt-dlp.exe');
 const workRoot = path.join(app.getPath('temp'), 'yta');
-// Testes automáticos: pasta de Downloads trocada (nunca no app instalado), para não gravar na real.
-if (!app.isPackaged && process.env.YTA_TEST_DOWNLOADS) app.setPath('downloads', process.env.YTA_TEST_DOWNLOADS);
+// Testes automáticos: Downloads, Música e Vídeos trocadas por uma pasta de teste (nunca no app
+// instalado) — as pastas padrão de áudio e vídeo saem daqui, e nada pode cair nas do usuário.
+if (!app.isPackaged && process.env.YTA_TEST_DOWNLOADS) {
+  for (const name of ['downloads', 'music', 'videos']) app.setPath(name, process.env.YTA_TEST_DOWNLOADS);
+}
 // Cookies do login do YouTube, no formato que o yt-dlp lê (ver o bloco de login mais abaixo).
 const cookiesFile = path.join(app.getPath('userData'), 'youtube-cookies.txt');
 
@@ -278,7 +286,7 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
       : []),
     '--progress-template',
     'download:YTA_PROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s',
-    '--print', 'before_dl:YTA_META %(.{id,extractor,title,description,uploader,channel,artist,duration,upload_date,webpage_url,acodec,vcodec,height,filesize,filesize_approx})j',
+    '--print', 'before_dl:YTA_META %(.{id,extractor,title,description,uploader,channel,artist,duration,upload_date,webpage_url,acodec,vcodec,height,filesize,filesize_approx,thumbnail})j',
     '--print', 'after_move:YTA_FILE %(filepath)s',
     url,
   ];
@@ -318,7 +326,13 @@ function fetchStreams(job, id, url, workDir, format, maxHeight, withLogin, refer
         };
         if (!meta) {
           meta = m;
-          send('job-event', { id, type: 'meta', title: title || m.title || null, duration: num(m.duration) });
+          send('job-event', {
+            id,
+            type: 'meta',
+            title: title || (isInstagram(m) ? fileTitle(m) : m.title) || null,
+            duration: num(m.duration),
+            thumb: thumbUrl(m),
+          });
         }
         // Em vídeo, cada fluxo tem a sua barra: "Baixando vídeo" e depois "Baixando áudio".
         const part = !video ? null : current.hasVideo ? 'video' : 'audio';
@@ -611,7 +625,15 @@ async function runJob({ id, uid, key, prefix, url, folder, format, bitrate, maxH
       files.push(dest);
     }
     const firstTitle = fetched.entries[0] ? fileTitle(fetched.entries[0].meta) : fetched.images?.[0]?.title;
-    addHistory({ uid: safeUid, key, url, title: firstTitle || title || null, format, files });
+    const first = fetched.entries[0]?.meta;
+    // Miniatura da lista: da capa local é rápido (e a pasta de trabalho some logo abaixo); do
+    // endereço do site pode levar segundos — vai depois, sem segurar o fim do item (o app fechando
+    // nesse meio-tempo baixaria tudo de novo ao reabrir).
+    const cover = (first && coverFor(workDir, first)) || fetched.images?.[0]?.file || null;
+    const thumb = cover ? await saveThumb(safeUid, cover) : null;
+    addHistory({ uid: safeUid, key, url, title: firstTitle || title || null, format, files, thumb, size: sizeOf(files), site: siteLabel(url) });
+    const remote = !thumb && thumbUrl(first);
+    if (remote) saveThumb(safeUid, remote).then((t) => t && setHistoryThumb(safeUid, t));
     return { ok: true, file: files[0], files };
   } catch (err) {
     if (out) fs.rmSync(`${out}.part`, { force: true });
@@ -773,7 +795,7 @@ async function runFileJob({ id, uid, key, url, folder, title, fileName }) {
     if (job.cancelled) throw new Cancelled();
     fs.renameSync(part, out);
     accel.markOfTheWeb(out, { url: src, referer: opts.referer });
-    addHistory({ uid: safeUid, key, url, title: path.basename(out), format: 'file', files: [out] });
+    addHistory({ uid: safeUid, key, url, title: path.basename(out), format: 'file', files: [out], size: sizeOf([out]), site: siteLabel(url) });
     return { ok: true, file: out, files: [out] };
   } catch (err) {
     if (job.cancelled) {
@@ -851,7 +873,9 @@ function openDialog(kind, data, { focus = true, slot = 0, onWindow } = {}) {
       show: false,
       title: kind === 'ask' ? 'Baixar arquivo' : 'Baixando',
       icon: path.join(__dirname, 'tray.png'),
-      backgroundColor: '#121316',
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: chromeColors().bg, symbolColor: chromeColors().symbol, height: 36 },
+      backgroundColor: chromeColors().bg,
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
     });
     const id = w.webContents.id;
@@ -1015,6 +1039,62 @@ ipcMain.handle('item-action', (e, action) => {
   win?.webContents.send('item-action', { id, action });
 });
 
+/* ---------- Miniaturas e rótulos da lista ----------
+ * A lista mostra a miniatura de cada item. Durante o download vale o endereço do site; no
+ * histórico fica uma cópia pequena (160 px) em userData/thumbs, porque os endereços do Instagram
+ * e de CDNs expiram. Do YouTube o endereço é fixo (i.ytimg.com), mas a cópia local também evita
+ * depender da internet para ver a lista. */
+const thumbsDir = path.join(app.getPath('userData'), 'thumbs');
+function thumbUrl(meta) {
+  if (!meta) return null;
+  if (/youtube/i.test(meta.extractor || '') && /^[\w-]{11}$/.test(meta.id || '')) return `https://i.ytimg.com/vi/${meta.id}/mqdefault.jpg`;
+  return /^https?:\/\//.test(meta.thumbnail || '') ? meta.thumbnail : null;
+}
+/** Cópia pequena da capa (arquivo local ou endereço) para a lista; null se não der (nunca falha). */
+async function saveThumb(uid, source) {
+  if (!source || !validUid(uid)) return null;
+  const out = path.join(thumbsDir, `${uid}.jpg`);
+  try {
+    await fs.promises.mkdir(thumbsDir, { recursive: true });
+    await new Promise((resolve, reject) =>
+      execFile(
+        ffmpegPath,
+        ['-hide_banner', '-loglevel', 'error', '-y', '-i', source, '-vf', 'scale=160:-2', '-frames:v', '1', '-q:v', '4', out],
+        { windowsHide: true, timeout: 20_000 },
+        (err) => (err ? reject(err) : resolve()),
+      ),
+    );
+    await fs.promises.access(out);
+    return out;
+  } catch {
+    return null;
+  }
+}
+/** Miniatura que ficou pronta depois do item: entra na entrada do histórico (se ela ainda existe). */
+function setHistoryThumb(uid, thumb) {
+  const entry = loadHistory().find((h) => h.uid === uid);
+  if (!entry) return fs.promises.rm(thumb, { force: true }).catch(() => {}); // tirado da lista antes
+  entry.thumb = thumb;
+  saveHistory();
+  send('history-changed');
+}
+function dropThumb(entry) {
+  if (entry?.thumb && entry.thumb.startsWith(thumbsDir)) fs.promises.rm(entry.thumb, { force: true }).catch(() => {});
+}
+/** "YouTube", "Instagram" ou o domínio (github.com). */
+function siteLabel(url) {
+  const site = siteOf(url);
+  return site === 'youtube' ? 'YouTube' : site === 'instagram' ? 'Instagram' : site;
+}
+const sizeOf = (files) =>
+  files.reduce((sum, file) => {
+    try {
+      return sum + fs.statSync(file).size;
+    } catch {
+      return sum;
+    }
+  }, 0) || null;
+
 /* ---------- Histórico (o que já foi baixado) ---------- */
 const historyFile = path.join(app.getPath('userData'), 'history.json');
 const HISTORY_MAX = 1000;
@@ -1041,13 +1121,26 @@ function saveHistory() {
 function addHistory(entry) {
   const list = loadHistory();
   list.unshift({ ...entry, at: Date.now() });
-  if (list.length > HISTORY_MAX) list.length = HISTORY_MAX;
+  if (list.length > HISTORY_MAX) {
+    for (const old of list.slice(HISTORY_MAX)) dropThumb(old);
+    list.length = HISTORY_MAX;
+  }
   saveHistory();
   send('history-changed');
 }
-/** Lista com "o arquivo ainda existe?" (o histórico guarda caminhos; arquivos podem ter sido apagados). */
-function listHistory() {
-  return loadHistory().map((h) => ({ ...h, exists: (h.files || []).some((f) => fs.existsSync(f)) }));
+/**
+ * Lista com "o arquivo ainda existe?" (o histórico guarda caminhos; arquivos podem ter sido
+ * apagados). Assíncrona: são até 1.000 conferências a cada item que termina, e uma pasta de rede ou
+ * pendrive fora do ar levaria segundos — bloqueando a fila, o andamento e a extensão.
+ */
+async function listHistory() {
+  const anyExists = async (files = []) => {
+    for (const f of files) if (await fs.promises.access(f).then(() => true, () => false)) return true;
+    return false;
+  };
+  const list = loadHistory().slice();
+  const exists = await Promise.all(list.map((h) => anyExists(h.files)));
+  return list.map((h, i) => ({ ...h, exists: exists[i] }));
 }
 /** Quais destas chaves já foram baixadas (com arquivo ainda no disco). */
 function checkHistory(keys) {
@@ -1096,24 +1189,51 @@ function loadQueue() {
 
 /* ---------- Playlists: só a lista (rápido), sem consultar cada vídeo ---------- */
 const PLAYLIST_MAX = 1000;
+/** Só a lista da playlist (rápido, sem consultar cada vídeo). */
+async function listPlaylist(url) {
+  if (!toolReady) prepareTool();
+  await toolReady;
+  const json = await new Promise((resolve, reject) => {
+    execFile(
+      ytdlpPath,
+      [...jsRuntimeArgs, '--flat-playlist', '--yes-playlist', '--no-warnings', '--encoding', 'utf-8', '-J', url],
+      { windowsHide: true, maxBuffer: 256 * 1024 * 1024, timeout: 120_000, env: ytdlpEnv },
+      (err, stdout, stderr) => (err ? reject(new Error(friendlyError(stderr || err.message))) : resolve(stdout)),
+    );
+  });
+  const info = JSON.parse(json);
+  const entries = (info.entries || [])
+    .map((e) => ({ url: [e.url, e.webpage_url].find((u) => /^https?:\/\//.test(u || '')), title: e.title || null }))
+    .filter((e) => e.url)
+    .slice(0, PLAYLIST_MAX);
+  if (!entries.length) throw new Error('A playlist está vazia ou é privada.');
+  return { info, entries };
+}
+/** Prévia de uma playlist: título, quantos vídeos e a miniatura do primeiro. */
+const playlistPreviews = new Map();
+function playlistPreview(url) {
+  if (playlistPreviews.has(url)) return playlistPreviews.get(url);
+  const p = listPlaylist(url)
+    .then(({ info, entries }) => {
+      const firstId = (entries[0].url.match(/[?&]v=([\w-]{11})/) || [])[1];
+      return {
+        ok: true,
+        title: info.title || 'Playlist',
+        uploader: info.uploader || info.channel || null,
+        count: entries.length,
+        thumbnail: firstId ? `https://i.ytimg.com/vi/${firstId}/mqdefault.jpg` : null,
+      };
+    })
+    .catch((err) => {
+      playlistPreviews.delete(url);
+      return { ok: false, error: err.message };
+    });
+  playlistPreviews.set(url, p);
+  return p;
+}
 function expandPlaylist(url, folder) {
   return (async () => {
-    if (!toolReady) prepareTool();
-    await toolReady;
-    const json = await new Promise((resolve, reject) => {
-      execFile(
-        ytdlpPath,
-        [...jsRuntimeArgs, '--flat-playlist', '--yes-playlist', '--no-warnings', '--encoding', 'utf-8', '-J', url],
-        { windowsHide: true, maxBuffer: 256 * 1024 * 1024, timeout: 120_000, env: ytdlpEnv },
-        (err, stdout, stderr) => (err ? reject(new Error(friendlyError(stderr || err.message))) : resolve(stdout)),
-      );
-    });
-    const info = JSON.parse(json);
-    const entries = (info.entries || [])
-      .map((e) => ({ url: [e.url, e.webpage_url].find((u) => /^https?:\/\//.test(u || '')), title: e.title || null }))
-      .filter((e) => e.url)
-      .slice(0, PLAYLIST_MAX);
-    if (!entries.length) throw new Error('A playlist está vazia ou é privada.');
+    const { info, entries } = await listPlaylist(url);
     if (!fs.existsSync(folder)) throw new Error('A pasta de destino não existe mais.');
     const sub = path.join(folder, safeName(info.title || 'Playlist'));
     fs.mkdirSync(sub, { recursive: true });
@@ -1144,11 +1264,46 @@ function probe(url) {
       if (err.needsLogin && isLoggedIn(siteOf(url))) return freshCookies(siteOf(url)).then(() => ask(true));
       throw err;
     });
-    const info = JSON.parse(json);
-    const heights = [...new Set((info.formats || [])
+    const root = JSON.parse(json);
+    // Carrossel do Instagram (e afins) vem como lista: a prévia é a do primeiro item.
+    const many = root._type === 'playlist' ? (root.entries || []).filter(Boolean) : null;
+    const info = many?.length ? { ...many[0], title: root.title || many[0].title } : root;
+    if (info.is_live || info.live_status === 'is_live') return { ok: false, error: 'Transmissões ao vivo não podem ser baixadas.' };
+    const formats = info.formats || [];
+    const duration = num(info.duration);
+    const heights = [...new Set(formats
       .filter((f) => f.vcodec && f.vcodec !== 'none' && f.height)
       .map((f) => f.height))].sort((a, b) => b - a);
-    return { ok: true, title: info.title || null, heights };
+    // Tamanho estimado por formato: o que o site informa, ou a taxa × a duração.
+    const bytesOf = (fmt) => (fmt ? num(fmt.filesize) ?? num(fmt.filesize_approx) ?? (fmt.tbr && duration ? Math.round((fmt.tbr * 1000 * duration) / 8) : null) : null);
+    const bestAudio = (pred) =>
+      formats
+        .filter((fmt) => fmt.vcodec === 'none' && fmt.acodec && fmt.acodec !== 'none' && pred(fmt))
+        .sort((a, b) => (b.abr || b.tbr || 0) - (a.abr || a.tbr || 0))[0];
+    const m4a = bytesOf(bestAudio((fmt) => /^mp4a/.test(fmt.acodec)));
+    const opus = bytesOf(bestAudio((fmt) => fmt.acodec === 'opus'));
+    const videoSizes = {};
+    for (const h of heights) {
+      const v = formats
+        .filter((fmt) => fmt.height === h && fmt.vcodec && fmt.vcodec !== 'none')
+        .sort((a, b) => (bytesOf(b) || 0) - (bytesOf(a) || 0))[0];
+      const vb = bytesOf(v);
+      if (vb) videoSizes[h] = vb + (v.acodec && v.acodec !== 'none' ? 0 : m4a || opus || 0);
+    }
+    const ig = isInstagram(info);
+    const caption = ig ? (info.description || '').split(/\r?\n/)[0].slice(0, 120).trim() : '';
+    return {
+      ok: true,
+      title: (ig ? caption || fileTitle(info) : info.title) || null,
+      uploader: info.channel || info.uploader || null,
+      duration,
+      thumbnail: thumbUrl(info),
+      site: siteLabel(url),
+      heights,
+      sizes: { m4a, opus },
+      videoSizes,
+      count: many?.length || 1,
+    };
   })().catch((err) => {
     probes.delete(url); // falha não fica guardada
     return { ok: false, error: err.message };
@@ -1314,7 +1469,8 @@ function instagramItem(raw, owner, useCode) {
   const name = raw.user?.username || raw.owner?.username || owner || 'instagram';
   const id = String((useCode && raw.code) || raw.pk);
   const video = raw.video_versions?.[0]?.url;
-  if (video) return { type: 'video', url: video, hasAudio: raw.has_audio !== false, id, owner: name };
+  const cover = raw.image_versions2?.candidates?.[0]?.url || null;
+  if (video) return { type: 'video', url: video, hasAudio: raw.has_audio !== false, id, owner: name, thumb: cover };
   const image = raw.image_versions2?.candidates?.[0]?.url;
   return raw.media_type === 1 && image ? { type: 'image', url: image, id, owner: name } : null;
 }
@@ -1430,7 +1586,7 @@ async function fetchInstagramItems(job, id, items, workDir, format, maxHeight) {
     if (it.type === 'video') {
       const got = await fetchStreams(job, id, it.url, workDir, format, maxHeight, false, 'https://www.instagram.com/', shown);
       for (const e of got.entries) {
-        Object.assign(e.meta, { title, extractor: 'generic' });
+        Object.assign(e.meta, { title, extractor: 'generic', thumbnail: it.thumb || e.meta.thumbnail });
         entries.push(e);
       }
       continue;
@@ -1610,19 +1766,40 @@ function cancelJob(id) {
   if (isAlive(job.child)) killTree(job.child.pid);
 }
 
+/*
+ * Cores da moldura (2.0): a barra de título é do app (titleBarStyle "hidden"); o Windows só
+ * desenha os 3 botões por cima (titleBarOverlay), na cor que o tema pede. O app segue o tema do
+ * Windows: ao trocar, as janelas abertas recebem as cores novas.
+ */
+function chromeColors() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { bg: dark ? '#0F1012' : '#F7F7F5', symbol: dark ? '#A7ACB4' : '#4D5157' };
+}
+nativeTheme.on('updated', () => {
+  const c = chromeColors();
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.setBackgroundColor(c.bg);
+    try {
+      w.setTitleBarOverlay({ color: c.bg, symbolColor: c.symbol });
+    } catch {}
+  }
+});
+
 function createWindow() {
+  const c = chromeColors();
   win = new BrowserWindow({
-    // Tamanhos da área de conteúdo (sem a moldura do Windows). A altura mínima comporta o
-    // formulário (310) + cabeçalho da fila (45) + 5 itens em andamento (5 × 57) + margem (12).
+    // Área de conteúdo (sem moldura): a barra do link, a prévia e uns 4 itens da lista.
     useContentSize: true,
-    width: 640,
-    height: 652,
-    minWidth: 560,
-    minHeight: 652,
+    width: 720,
+    height: 720,
+    minWidth: 600,
+    minHeight: 560,
     title: 'YTA',
     icon: path.join(__dirname, 'tray.png'),
     show: false, // aparece em ready-to-show; aberto pela extensão, fica só na bandeja
-    backgroundColor: '#121316',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: c.bg, symbolColor: c.symbol, height: 44 },
+    backgroundColor: c.bg,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1692,12 +1869,14 @@ ipcMain.handle('retry-tool', () => prepareTool().then(() => true, () => false));
 ipcMain.handle('history-list', () => listHistory());
 ipcMain.handle('history-check', (_e, keys) => checkHistory(Array.isArray(keys) ? keys : []));
 ipcMain.handle('history-remove', (_e, uid) => {
+  loadHistory().filter((h) => h.uid === uid).forEach(dropThumb);
   history = loadHistory().filter((h) => h.uid !== uid);
   saveHistory();
 });
 ipcMain.handle('history-clear', () => {
   history = [];
   saveHistory();
+  fs.promises.rm(thumbsDir, { recursive: true, force: true }).catch(() => {});
 });
 ipcMain.handle('queue-load', () => loadQueue());
 ipcMain.handle('discard-work', (_e, uid) => {
@@ -1708,7 +1887,39 @@ ipcMain.on('queue-save', (_e, list) => Array.isArray(list) && saveQueue(list));
 ipcMain.handle('playlist-expand', (_e, url, folder) => expandPlaylist(url, folder));
 // No Electron 44 a área de transferência é assíncrona (readText devolve uma promessa).
 ipcMain.handle('clipboard-text', async () => String((await clipboard.readText()) || '').slice(0, 4000));
-ipcMain.handle('special-folders', () => ({ music: app.getPath('music'), videos: app.getPath('videos') }));
+ipcMain.handle('special-folders', () => ({ music: app.getPath('music'), videos: app.getPath('videos'), downloads: app.getPath('downloads') }));
+ipcMain.handle('clipboard-write', (_e, text) => typeof text === 'string' && clipboard.writeText(text.slice(0, 4000)));
+ipcMain.handle('playlist-preview', (_e, url) => playlistPreview(String(url || '')));
+// Prévia de um link direto de arquivo (acelerador): nome, tamanho, se aceita pedaços.
+ipcMain.handle('file-preview', async (_e, url) => {
+  try {
+    const info = await accel.probe(String(url || ''), {}, AbortSignal.timeout(10_000));
+    const { base, ext } = splitName(info.name || 'download', info.type);
+    let host = '';
+    try {
+      host = new URL(url).hostname.replace(/^www\./, '');
+    } catch {}
+    return { ok: info.type !== 'text/html', name: ext ? `${base}.${ext}` : base, ext, size: info.size, ranges: info.ranges, host, error: info.type === 'text/html' ? 'O link é de uma página, não de um arquivo.' : null };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+/** Tudo o que a tela de Ajustes mostra, num pedido só. */
+function appPrefs() {
+  return {
+    ...bridge.downloadPrefs(),
+    fileFolder: defaultFileFolder(),
+    autostart: bridge.autostartState(),
+    extension: bridge.extensionState(),
+    version: app.getVersion(),
+  };
+}
+ipcMain.handle('app-prefs', () => appPrefs());
+ipcMain.handle('app-prefs-set', (_e, patch = {}) => {
+  bridge.setDownloadPrefs(patch);
+  if (typeof patch.autostart === 'boolean') bridge.setAutostartFromApp(patch.autostart);
+  return appPrefs();
+});
 
 if (!bridge.claimSingleInstance()) app.exit(0); // já há um YTA aberto: o pedido foi entregue a ele
 app.setAppUserModelId('local.yta'); // notificações do Windows com o nome e o ícone do app

@@ -61,16 +61,28 @@ const writeState = (patch) => fs.writeFileSync(stateFile(), JSON.stringify({ ...
  * (showProgress substitui o showDone da 1.6.0: a janela de andamento termina como "Concluído".) */
 function downloadPrefs() {
   const st = readState();
-  return { askSave: st.askSave ?? true, showProgress: st.showProgress ?? st.showDone ?? true, fileFolder: st.fileFolder || null };
+  return {
+    // 2.0: a chave "Acelerar downloads do navegador" mora aqui (antes, só na extensão).
+    capture: st.capture ?? true,
+    askSave: st.askSave ?? true,
+    showProgress: st.showProgress ?? st.showDone ?? true,
+    fileFolder: st.fileFolder || null,
+  };
 }
 function setDownloadPrefs(patch = {}) {
   const clean = {};
-  for (const k of ['askSave', 'showProgress']) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
+  for (const k of ['capture', 'askSave', 'showProgress']) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
   if (typeof patch.fileFolder === 'string' && patch.fileFolder) clean.fileFolder = patch.fileFolder;
   if (!Object.keys(clean).length) return downloadPrefs();
   writeState(clean);
-  if (tray) tray.setContextMenu(trayMenu());
+  prefsChanged();
   return downloadPrefs();
+}
+/** Bandeja, popup e Ajustes mostram as mesmas chaves: quem mudou avisa os outros. */
+function prefsChanged() {
+  if (tray) tray.setContextMenu(trayMenu());
+  const win = ctx?.getWin();
+  if (win && !win.isDestroyed()) win.webContents.send('prefs-changed');
 }
 
 /** Pasta fixa da extensão (carregada no Chrome em modo desenvolvedor). */
@@ -146,12 +158,26 @@ function setAutostart(on) {
 function initAutostart() {
   if (app.isPackaged && !readState().autostartDecided) setAutostart(true);
 }
+const autostartState = () => ({ available: app.isPackaged, on: autostartOn() });
+function setAutostartFromApp(on) {
+  setAutostart(on);
+  prefsChanged();
+}
+// A extensão pinga a cada minuto (alarme): 150 s de folga para o atraso do alarme.
+const EXTENSION_ALIVE_MS = 150_000;
+const extensionState = () => ({ connected: Date.now() - lastExtensionContact < EXTENSION_ALIVE_MS, dir: extensionDir() });
 
 function trayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Abrir o YTA', click: showWindow },
     { label: 'Conectar extensão do navegador…', click: () => showExtensionHelp() },
     { type: 'separator' },
+    {
+      label: 'Acelerar downloads do navegador',
+      type: 'checkbox',
+      checked: downloadPrefs().capture,
+      click: (item) => setDownloadPrefs({ capture: item.checked }),
+    },
     {
       label: 'Perguntar onde salvar downloads',
       type: 'checkbox',
@@ -170,10 +196,7 @@ function trayMenu() {
       type: 'checkbox',
       checked: autostartOn(),
       enabled: app.isPackaged,
-      click: (item) => {
-        setAutostart(item.checked);
-        tray.setContextMenu(trayMenu());
-      },
+      click: (item) => setAutostartFromApp(item.checked),
     },
     { type: 'separator' },
     { label: 'Sair', click: () => quit() },
@@ -287,6 +310,7 @@ function startServer() {
       }
       // Download do navegador que a extensão segurou: o YTA assume se der para acelerar.
       if (req.method === 'POST' && url.pathname === '/capture') {
+        if (!downloadPrefs().capture) return send(res, { ok: false, reason: 'Acelerador desligado.' });
         const r = await ctx.capture(await readJson(req));
         if (!r.ok) return send(res, r);
         // Com a janela "Baixar arquivo": o navegador já pode cancelar o dele; a fila espera a resposta.
@@ -300,7 +324,16 @@ function startServer() {
       }
       if (url.pathname === '/settings') {
         const p = req.method === 'POST' ? setDownloadPrefs(await readJson(req)) : downloadPrefs();
-        return send(res, { askSave: p.askSave, showProgress: p.showProgress });
+        return send(res, { capture: p.capture, askSave: p.askSave, showProgress: p.showProgress });
+      }
+      // O que está andando agora (popup da extensão).
+      if (req.method === 'GET' && url.pathname === '/items') {
+        const pending = ['queued', 'listing', 'paused', 'preparing', 'download', 'convert'];
+        const list = [...items.values()]
+          .filter((it) => pending.includes(it.phase))
+          .slice(0, 5)
+          .map(({ id, title, url: link, kind, format, phase, percent, speed, eta, pausing, part, copy, done, size }) => ({ id, title, url: link, kind, format, phase, percent, speed, eta, pausing, part, copy, done, size }));
+        return send(res, { items: list });
       }
       if (req.method === 'GET' && url.pathname === '/status') {
         const it = items.get(Number(url.searchParams.get('id')));
@@ -401,7 +434,7 @@ function ensureExtensionSynced() {
 async function showExtensionHelp() {
   const dir = extensionDir();
   await clipboard.writeText(dir); // assíncrono no Electron 44
-  const connected = Date.now() - lastExtensionContact < 90_000;
+  const connected = Date.now() - lastExtensionContact < EXTENSION_ALIVE_MS;
   const { response } = await dialog.showMessageBox(ctx.getWin()?.isVisible() ? ctx.getWin() : undefined, {
     type: 'info',
     title: 'Extensão do navegador',
@@ -452,6 +485,9 @@ module.exports = {
   enqueue,
   downloadPrefs,
   setDownloadPrefs,
+  autostartState,
+  setAutostartFromApp,
+  extensionState,
   claimSingleInstance,
   startsHidden,
   hideOnClose,

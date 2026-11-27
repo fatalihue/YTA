@@ -4,44 +4,119 @@
     <meta charset="utf-8" />
     <title>YTA</title>
     <style>
-      :root { --bg: #17181c; --card: #1d1f24; --border: rgba(255,255,255,.11); --text: #e6e7ea; --muted: #a8abb2;
-        --accent: #2f6fe4; --accent-hover: #3b7bf0; --ok: #6fd69a; --err: #ff8a8a; color-scheme: dark; }
+      /* Tokens do YTA 2.0 (Grafite), nos dois temas do sistema — os mesmos do app. */
+      :root {
+        color-scheme: dark;
+        --base: #0f1012; --elevated: #202226; --hairline: #222428; --strong: #3a3d44;
+        --text: #edeef0; --muted: #a7acb4; --faint: #868c95;
+        --ink: #f2f3f5; --ink-hover: #ffffff; --ink-fg: #0f1012;
+        --accent: #7c9cff; --track: #26282c; --ok: #5cd38a; --err: #ff7b7b; --wash: rgba(255, 255, 255, 0.06);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --base: #f7f7f5; --elevated: #efefec; --hairline: #ebebe8; --strong: #c9c9c3;
+          --text: #17181a; --muted: #4d5157; --faint: #6b7077;
+          --ink: #17181a; --ink-hover: #2c2e32; --ink-fg: #ffffff;
+          --accent: #3557e0; --track: #e6e6e2; --ok: #18794a; --err: #c9302c; --wash: rgba(0, 0, 0, 0.05);
+        }
+      }
       * { box-sizing: border-box; }
-      body { margin: 0; width: 280px; padding: 16px; background: var(--bg); color: var(--text);
+      body { margin: 0; width: 340px; background: var(--base); color: var(--text);
         font: 13px/18px 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; }
-      h1 { margin: 0 0 12px; font: 600 15px/20px 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
-        display: flex; align-items: center; gap: 8px; }
-      h1 img { width: 20px; height: 20px; }
-      .status { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--muted); }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-      .on .dot { background: var(--ok); } .off .dot { background: var(--err); }
-      p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 16px; }
-      button { width: 100%; height: 32px; border: 0; border-radius: 4px; background: var(--accent); color: #fff;
-        font: 500 13px/18px inherit; font-family: inherit; cursor: pointer; }
-      button:hover { background: var(--accent-hover); }
+      button { font: inherit; color: inherit; }
       button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .num { font-variant-numeric: tabular-nums; }
-      .toggle { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; cursor: pointer; }
-      .toggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
-      #windows { margin: 0 0 12px; }
-      .toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .link { all: unset; color: var(--accent-hover); cursor: pointer; }
+      .mono { font-family: Consolas, 'Cascadia Mono', ui-monospace, monospace; font-size: 12px; }
+      .micro { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+      .minor { font-size: 12px; line-height: 16px; color: var(--faint); }
+
+      header { display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px; }
+      .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--ink); color: var(--ink-fg);
+        display: flex; align-items: center; justify-content: center; }
+      .brand { flex: 1; font-weight: 600; letter-spacing: 0.01em; }
+      .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--muted); }
+      .dot { width: 6px; height: 6px; border-radius: 3px; background: var(--faint); }
+      .on .dot { background: var(--ok); }
+
+      section { display: flex; flex-direction: column; padding: 12px 16px; border-top: 1px solid var(--hairline); }
+      .head { height: 24px; display: flex; align-items: center; }
+      .head .micro { flex: 1; }
+      .items { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+      .item { display: flex; flex-direction: column; gap: 4px; }
+      .line { display: flex; align-items: baseline; gap: 12px; }
+      .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pct { font-weight: 500; font-variant-numeric: tabular-nums; }
+      .pct.rest { color: var(--faint); }
+      .bar { height: 2px; border-radius: 1px; background: var(--track); overflow: hidden; }
+      .bar span { display: block; height: 100%; background: var(--accent); transform-origin: left; }
+      .bar.rest span { background: var(--faint); }
+      .empty { margin: 4px 0 0; }
+
+      .row { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+      .row.tall { min-height: 48px; }
+      .row .label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      .switch { appearance: none; position: relative; flex-shrink: 0; width: 34px; height: 20px; margin: 0; padding: 0;
+        border-radius: 10px; border: 1px solid var(--strong); background: transparent; cursor: pointer; }
+      .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 7px;
+        background: var(--muted); transition: transform 150ms ease; }
+      .switch[aria-checked='true'] { border-color: var(--ink); background: var(--ink); }
+      .switch[aria-checked='true']::after { transform: translateX(14px); background: var(--ink-fg); }
+      .switch:disabled { opacity: 0.5; cursor: default; }
+      @media (prefers-reduced-motion: reduce) { .switch::after { transition: none; } }
+      .link { all: unset; color: var(--text); font-weight: 500; cursor: pointer; border-radius: 4px; }
       .link:hover { text-decoration: underline; }
       .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      #hidden-sites { text-align: right; }
+
+      footer { padding: 8px 16px 16px; }
+      .primary { width: 100%; height: 36px; border: 0; border-radius: 8px; background: var(--ink); color: var(--ink-fg);
+        font-weight: 600; cursor: pointer; }
+      .primary:hover { background: var(--ink-hover); }
     </style>
   </head>
   <body>
-    <h1><img src="icons/32.png" alt="" /> YTA</h1>
-    <div class="status" id="status"><span class="dot"></span><span id="status-text">Procurando o YTA…</span></div>
-    <p id="hint">Passe o mouse sobre um vídeo (YouTube, Instagram e a maioria dos sites) e use o botão “Baixar”. Clique direito em um link também funciona.</p>
-    <label class="toggle"><input type="checkbox" id="capture" /> Acelerar downloads do navegador</label>
-    <p>Arquivos de 1&nbsp;MB ou mais vão para o YTA e baixam em 8 conexões. Desligado, o navegador baixa sozinho.</p>
-    <div id="windows" hidden>
-      <label class="toggle"><input type="checkbox" id="ask-save" /> Perguntar onde salvar</label>
-      <label class="toggle"><input type="checkbox" id="show-done" /> Mostrar andamento</label>
-    </div>
-    <p id="hidden-sites" hidden></p>
-    <button id="open">Abrir o YTA</button>
+    <header>
+      <span class="mark" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11" /><path d="m7 10 5 5 5-5" /><path d="M6 20h12" /></svg>
+      </span>
+      <span class="brand">YTA</span>
+      <span class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Procurando o YTA…</span></span>
+    </header>
+
+    <section aria-labelledby="agora">
+      <div class="head">
+        <span class="micro" id="agora">Agora</span>
+        <span class="minor num" id="speed"></span>
+      </div>
+      <div class="items" id="items" hidden></div>
+      <p class="minor empty" id="empty">Passe o mouse sobre um vídeo e use o botão Baixar. Clique direito num link também funciona.</p>
+    </section>
+
+    <section aria-labelledby="navegador">
+      <div class="head"><span class="micro" id="navegador">Downloads do navegador</span></div>
+      <div class="row tall">
+        <span class="label"><span id="l-capture">Acelerar downloads</span><span class="minor">1 MB ou mais, em até 8 conexões</span></span>
+        <button type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="l-capture" data-key="capture" disabled></button>
+      </div>
+      <div class="row">
+        <span class="label" id="l-ask">Perguntar onde salvar</span>
+        <button type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="l-ask" data-key="askSave" disabled></button>
+      </div>
+      <div class="row">
+        <span class="label" id="l-progress">Mostrar andamento</span>
+        <button type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="l-progress" data-key="showProgress" disabled></button>
+      </div>
+      <p class="minor" id="closed-hint" hidden>Abra o YTA para mudar estas opções.</p>
+      <div class="row">
+        <span class="label">Sites ocultos</span>
+        <span class="minor" id="hidden-sites">Nenhum</span>
+      </div>
+    </section>
+
+    <footer>
+      <button type="button" class="primary" id="open">Abrir o YTA</button>
+    </footer>
     <script src="popup.js"></script>
   </body>
 </html>

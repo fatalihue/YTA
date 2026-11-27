@@ -69,7 +69,9 @@ foco, tipografia ou fazer codemod.
 20. **Promessa vinda do `contextBridge` não é "esperada" pelo CDP** (`Runtime.evaluate` com
     `awaitPromise` devolve `{}`). Nos testes, encadear `.then(String, e => 'ERRO ' + e.message)`.
 21. **Teste que baixa de verdade precisa de trava de pasta**: conferir que o destino é o do teste
-    antes do primeiro download (uma corrida já mandou arquivos de teste para a pasta Música).
+    antes do primeiro download (uma corrida já mandou arquivos de teste para a pasta Música — e a
+    2.0 repetiu o erro: o teste trocava só Downloads, e o M4A foi para Música). Hoje
+    `YTA_TEST_DOWNLOADS` troca Downloads, Música e Vídeos de uma vez; conferir a pasta no relatório.
 22. **Acelerador: abrir as 8 conexões de uma vez é pior que uma só** em servidores com limite (a
     Hetzner responde 429 a partir da 3ª; medido 26,7 → 2,8 MB/s). Abrir em rampa e parar na primeira
     recusa de uma conexão nova; devolver o pedaço recusado à conexão de onde ele saiu.
@@ -93,3 +95,47 @@ foco, tipografia ou fazer codemod.
     descarta codec desconhecido — o .mp4 direto não informa codec; `[acodec!=?none]` aceita.
 28. **yt-dlp em carrossel do Instagram com foto:** lista os vídeos e termina com erro na 1ª foto
     ("No video formats found"), derrubando o item inteiro. Testar carrossel misto, não só de vídeo.
+29. **O Electron não lê o `APPDATA` do ambiente** para o userData: um teste "isolado" por variável
+    de ambiente rodou no perfil real (e gravou no histórico). Isolar com `app.setPath('userData')`
+    antes de qualquer uso (`YTA_TEST_USERDATA`, só fora do app instalado). O localStorage leva
+    ~5–7 s para ir ao disco: esperar antes de matar o processo num teste que confere preferências.
+
+## Interface 2.0 (nov/2026)
+
+30. **Cascadia Mono variável no Chromium (Windows 11):** pedida pela família, sai engrossada pelo
+    hinting a 12–13 px (parece negrito). Numa página solta, `font-variation-settings: 'wght' 400`
+    "corrige"; na janela do app não muda nada, e o peso 350 funciona ou não conforme a ordem em que
+    as instâncias carregam. `local('Cascadia Mono Regular')` não acha a face (o que parecia regular
+    era a Consolas de reserva). Conferir fonte SEMPRE na janela real, em 1x, ampliando a captura.
+31. **Tailwind 4 registra `--tw-*` com `inherits: false`** (e zera com `initial`): regra própria que
+    lê `var(--tw-font-weight)` não vê o peso do pai. Não construir em cima das variáveis internas.
+32. **`input type="search"` tem um "x" nativo** (`::-webkit-search-cancel-button`) que duplica o
+    botão de fechar do campo; esconder com `appearance: none`.
+33. **Dica perto da barra de título:** com `titleBarOverlay`, os botões do Windows são desenhados
+    POR CIMA da página; uma dica posicionada acima de um botão a menos de ~80 px do topo some atrás
+    deles. Abrir para baixo.
+34. **Regra genérica de item vence a de um controle dentro do menu:** `.menu button { width: 100% }`
+    (0,1,1) passou por cima de `.switch { width: 30px }` (0,1,0) e a chave virou uma barra. Estilizar
+    itens por classe (`.menu .item`), nunca pela tag.
+35. **Teste da extensão por script (Edge):** (a) o manifesto exclui `http://127.0.0.1/*` (páginas do
+    próprio YTA) e o app só aceita endereço com ponto — servir a página de teste em `127.0.0.2`;
+    (b) janela encoberta pausa o `requestAnimationFrame` (a pílula nunca aparece):
+    `--disable-backgrounding-occluded-windows --disable-features=CalculateNativeWinOcclusion`;
+    (c) `--load-extension` pede `--disable-features=DisableLoadExtensionCommandLineSwitch`; (d) o
+    msedge.exe lançado passa a vez a outros processos — fechar com `Browser.close` pelo CDP (matar o
+    PID deixa o navegador vivo segurando a porta de depuração, e a rodada seguinte fala com ele);
+    (e) clique que fecha a janela nunca recebe a resposta do `Runtime.evaluate`: pôr limite de tempo.
+36. **Menu em portal que só monta depois de medir a posição:** o efeito que foca o primeiro item
+    rodava antes de o menu existir (React roda os efeitos da 1ª passada antes do re-render pedido
+    pelo efeito de layout) — na 1ª abertura de cada menu o foco ficava no gatilho e as setas não
+    andavam. Focar num efeito que depende de `[open, pos]`.
+37. **Nada opcional entre "arquivo pronto" e "item concluído":** a miniatura da lista (ffmpeg lendo
+    a capa pela internet, até 20 s) segurava o fim do download; fechar o app nesse meio-tempo fazia a
+    fila baixar tudo de novo ao reabrir. Trabalho opcional vai depois, em segundo plano, e nunca pode
+    lançar erro síncrono (um `mkdirSync` que falha antes do `.catch` vira "Falhou").
+38. **Conferir arquivos no processo principal só de forma assíncrona:** `existsSync` em 1.000
+    entradas a cada item concluído trava a fila, o andamento e a extensão — e numa pasta de rede fora
+    do ar, por segundos. `fs.promises.access` em paralelo.
+39. **Script de página da extensão:** aceitar só eventos com `isTrusted` (a página pode disparar
+    `pointermove` e `.click()` sintéticos e baixar sem o usuário); `aria-live` nunca em texto que
+    muda várias vezes por segundo (bytes, velocidade) — o leitor de tela não para de falar.

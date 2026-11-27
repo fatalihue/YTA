@@ -1,7 +1,8 @@
 # YTA
 
 Cola um ou mais links de vídeo (YouTube, Instagram e a maioria dos sites), escolhe a pasta e o
-formato, e sai o arquivo de áudio ou o vídeo completo. App desktop para Windows (Electron + React + Tailwind 4).
+formato, e sai o arquivo de áudio ou o vídeo completo — e, com a extensão, acelera os downloads
+comuns do navegador. Uma barra e uma lista. App desktop para Windows (Electron + React + Tailwind 4).
 
 ## Instalar
 
@@ -15,31 +16,56 @@ O instalador não é assinado: na primeira vez o SmartScreen pode avisar — "Ma
 ### Atualização automática
 
 Ao abrir (e a cada 4 h) o YTA procura uma versão nova, baixa em segundo plano e mostra
-"Versão X pronta · Reiniciar e atualizar" no cabeçalho da fila. Reiniciando, ele instala em
+"Versão X pronta · Reiniciar" na barra de título. Reiniciando, ele instala em
 silêncio e reabre já atualizado; se não, instala ao fechar o app. Com downloads em andamento, ele
 espera — não interrompe a fila.
 
 O feed é o `latest.yml` da release mais recente, lido pelo endereço fixo
 `releases/latest/download/` (sem a API do GitHub, como no TrueReplayer).
 
+## A janela
+
+- **Uma barra:** cole (Ctrl+V em qualquer lugar da janela), arraste ou digite um link. Com um link
+  aparece a prévia — miniatura, título, canal, duração e o tamanho estimado —, com **M4A · Opus · MP3
+  · Vídeo ▾** (no menu do vídeo, as resoluções que aquele vídeo tem, com o tamanho de cada uma), a
+  pasta de destino e **Baixar** (ou Enter). Com vários links, um cartão lista cada um (YouTube,
+  Instagram, arquivo, playlist), avisa o que já foi baixado ou já está na fila e baixa todos.
+- **Uma lista:** em cima, **Agora** — o que está na fila ou baixando, com %, tamanho, conexões,
+  velocidade e tempo restante (o mouse em cima mostra Pausar e Cancelar; **Pausar tudo / Retomar
+  tudo** no cabeçalho). Embaixo, o que terminou, por dia (Hoje, Ontem, 12 de nov.), com miniatura,
+  site, formato, tamanho e pasta: o mouse em cima mostra **Mostrar na pasta** e o menu (Abrir,
+  Baixar de novo, Copiar link, Tirar da lista); duplo clique abre. A lupa busca nos baixados e o "…"
+  limpa as falhas ou o histórico. Falhas ficam na lista com o motivo e **Tentar de novo**.
+- **Ajustes** (ícone na barra de título): pastas de áudio, vídeo e arquivos; qualidade do MP3;
+  conversão para H.264; contas (YouTube, Instagram); a extensão e as chaves dos downloads do
+  navegador; iniciar com o Windows; versão.
+- **Tema:** segue o claro/escuro do Windows, inclusive a barra de título e as janelas de download.
+
 ## Extensão do navegador
 
-Um botão **"Baixar"** aparece no canto dos vídeos de qualquer site — com regras próprias no YouTube
-(página, Shorts, prévias, players embutidos) e no Instagram (feed, reels, posts) —, como o do IDM:
+Um botão **"Baixar"** (uma pílula) aparece no canto dos vídeos de qualquer site — com regras
+próprias no YouTube (página, Shorts, miniaturas, prévias, players embutidos) e no Instagram (feed,
+reels, posts, stories) —, como o do IDM:
 
-- **clique no corpo**: baixa com a última escolha (ex.: "Áudio M4A");
-- **setinha**: menu com áudio (M4A, Opus, MP3), vídeo (melhor ou as resoluções reais daquele vídeo)
-  e "Compatível com WhatsApp (H.264)";
-- o próprio botão mostra o andamento: na fila → baixando % → **Salvo · Abrir pasta**;
-- o **×** esconde o botão naquele vídeo; **"Não mostrar em …"** (no menu) esconde no site todo
-  (desfaz pelo ícone da extensão); clique direito em um link: "Baixar com o YTA".
+- **clique na pílula**: baixa com a última escolha (ex.: "Baixar M4A");
+- **setinha**: menu com áudio (M4A, Opus, MP3), vídeo (Melhor ou as resoluções daquele vídeo, com o
+  tamanho), a chave "Compatível com WhatsApp", **Esconder neste vídeo** e **Não mostrar em …** (o
+  site todo; desfaz pelo popup);
+- a própria pílula mostra o andamento: na fila → anel com o % → **Salvo · Abrir pasta** (durante o
+  download, clicar nela abre o YTA);
+- clique direito em um link: "Baixar com o YTA".
+
+**Popup** (ícone da extensão): se o YTA está conectado, o que está baixando agora (velocidade e tempo
+restante), as chaves dos downloads do navegador (as mesmas dos Ajustes e da bandeja), os sites em que
+a pílula foi escondida e **Abrir o YTA**. Com o navegador aberto, a extensão avisa o YTA a cada minuto
+(é o "Extensão do Chrome conectada" dos Ajustes e da tela inicial).
 
 O download acontece no YTA (mesma fila, pasta e formatos); a extensão só envia o pedido. Com o YTA
 fechado, ela o abre pelo `yta://` (o Chrome pergunta "Abrir o YTA?" na primeira vez — marque
 "sempre permitir") e o app fica só na bandeja.
 
-**Instalar (modo desenvolvedor):** no YTA, botão de peça de quebra-cabeça no cabeçalho da fila (ou
-ícone da bandeja → "Conectar extensão do navegador…"). Ele copia o caminho da pasta da extensão
+**Instalar (modo desenvolvedor):** no YTA, Ajustes → Navegador → **Conectar…** (ou ícone da bandeja
+→ "Conectar extensão do navegador…"). Ele copia o caminho da pasta da extensão
 (`%APPDATA%\yta\extension`); em `chrome://extensions` (ou `edge://extensions`) ative o
 "Modo do desenvolvedor" → "Carregar sem compactação" → cole o caminho. A pasta é atualizada pelo
 próprio YTA a cada versão e a extensão se recarrega sozinha.
@@ -74,15 +100,15 @@ arquivo de 1 GB 39 → 62 MB/s (o limite do link). Onde uma conexão já enche o
   **Tentar de novo**. Aparece na frente sem roubar o foco, no máximo 3 de cada vez (em cascata; os
   demais só na fila). **Não mostrar esta janela** desliga para os próximos. O que se cola no próprio
   app não abre janela (a fila já mostra).
-- **Ligar/desligar as janelas:** ícone da bandeja ("Perguntar onde salvar downloads", "Mostrar
-  janela de andamento") ou o popup da extensão ("Perguntar onde salvar", "Mostrar andamento").
+- **Ligar/desligar as janelas:** Ajustes → Navegador, o ícone da bandeja ou o popup da extensão
+  ("Perguntar onde salvar", "Mostrar andamento") — os três mostram as mesmas chaves.
 - **Destino sem perguntar:** a pasta lembrada (ou Downloads do Windows); nunca sobrescreve
   ("Nome (2).zip").
 - **Links temporários:** muitos sites (GitHub, CDNs) mandam para um link assinado que expira em ~1 h.
   O item guarda o endereço original (é ele que conta para "já baixado" e "Baixar de novo"); se o
   link direto expirar numa pausa longa, o download continua pelo original, dos mesmos pedaços.
 - **Fila:** os arquivos entram na mesma fila, com 3 vagas próprias (um vídeo longo não segura um
-  arquivo); pausar, retomar (também depois de fechar o app), cancelar e "Baixados" funcionam igual.
+  arquivo); pausar, retomar (também depois de fechar o app), cancelar e a lista funcionam igual.
   A linha mostra quantas conexões estão baixando.
 - **Link direto colado** (ou arrastado, ou clique direito num link `.zip`/`.exe`/…) também vai para o
   acelerador, sem passar pelo yt-dlp.
@@ -92,7 +118,8 @@ arquivo de 1 GB 39 → 62 MB/s (o limite do link). Onde uma conexão já enche o
   cai é retomada do ponto onde estava.
 - **Segurança:** o arquivo recebe a marca "baixado da internet" (Zone.Identifier), como o navegador
   faz: o Windows continua avisando ao abrir um `.exe`.
-- **Desligar:** ícone da extensão → "Acelerar downloads do navegador".
+- **Desligar:** "Acelerar downloads" nos Ajustes, no popup da extensão ou na bandeja (a escolha fica
+  no YTA).
 
 ## Bandeja
 
@@ -112,6 +139,10 @@ npm version patch              # sobe a versão (commit + tag)
 npm run release -- "- Novidade 1" "- Novidade 2"
 ```
 
+Testes automáticos podem abrir o app de desenvolvimento num perfil isolado: `YTA_TEST_USERDATA`
+(histórico, fila, ajustes, localStorage) e `YTA_TEST_DOWNLOADS` (Downloads, Música e Vídeos). O app
+instalado ignora os dois.
+
 `npm run release` exige a árvore limpa no `main`, gera o instalador, envia o código e a tag e cria a
 release (marcada como *latest*) com o instalador, o `.blockmap` e o `latest.yml` — os arquivos que
 os apps instalados leem para se atualizar. Sem notas, o GitHub gera a partir dos commits.
@@ -121,21 +152,22 @@ os apps instalados leem para se atualizar. Sem notas, o GitHub gera a partir dos
 - **Arrastar e soltar** um link do navegador na janela já põe na fila.
 - **Link copiado:** ao voltar para a janela com um link de vídeo na área de transferência, aparece
   "Link copiado: … · Colar".
-- **Pastas separadas:** áudios vão para uma pasta e vídeos para outra (padrão: Música e Vídeos); a
-  linha "Salvar … em" mostra a do formato escolhido.
+- **Pastas separadas:** áudios vão para uma pasta, vídeos para outra e arquivos para uma terceira
+  (padrão: Música, Vídeos e Downloads); a prévia mostra "Salvar em" com a do formato escolhido
+  (clique para trocar) e as três ficam nos Ajustes.
 - **Playlists do YouTube:** o link da playlist vira os vídeos dela, numerados (01, 02…) numa pasta
   com o nome da playlist. Um vídeo aberto dentro de uma playlist pergunta "Só o vídeo" ou "A
   playlist inteira". Os "Mix" automáticos (`list=RD…`) são infinitos e ficam como vídeo único.
   Baixando a mesma playlist de novo, só os vídeos novos entram (os já baixados são pulados).
-- **Baixados:** a aba ao lado da fila guarda os últimos 1.000 downloads (abrir a pasta, baixar de
-  novo, tirar do histórico). Colar um link já baixado no mesmo formato avisa e oferece "Baixar de novo".
-- **Pausar tudo / Retomar tudo** (cabeçalho da fila): pausar para os downloads guardando o que já
+- **Baixados:** o histórico guarda os últimos 1.000 downloads; a lista mostra os 300 mais recentes e
+  a busca procura em todos. Colar um link já baixado no mesmo formato avisa e oferece "Baixar de novo".
+- **Pausar tudo / Retomar tudo** (cabeçalho "Agora"): pausar para os downloads guardando o que já
   veio; retomar continua daí (cada item pausado também tem o seu "Retomar"). Pausados continuam
   pausados ao reabrir o app.
 - **A fila sobrevive ao fechar:** o que estava na fila ou baixando volta ao reabrir, e um download
   interrompido continua de onde parou.
 - **Capa:** M4A e MP3 saem com a miniatura do vídeo como capa (o Opus não guarda capa).
-- **Iniciar com o Windows** (ícone da bandeja), ligado por padrão: o YTA abre já na bandeja e a
+- **Iniciar com o Windows** (Ajustes ou ícone da bandeja), ligado por padrão: o YTA abre já na bandeja e a
   extensão sempre o encontra.
 
 ## Formatos

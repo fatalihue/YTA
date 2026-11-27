@@ -1,8 +1,9 @@
-// Botão "YTA" sobre os vídeos de qualquer site (como o do IDM). YouTube e Instagram têm regras
+// Botão "Baixar" sobre os vídeos de qualquer site (como o do IDM). YouTube e Instagram têm regras
 // próprias para achar o link de cada vídeo; nos outros sites vai o endereço da página (ou do
 // player embutido) e o serviço de fundo junta o arquivo de vídeo que a página tocava.
-// - Clique no corpo: baixa com a última escolha. Setinha: menu com áudio/vídeo/resolução.
-// - O botão mostra o andamento (na fila → baixando % → salvo · abrir pasta).
+// - Clique na pílula: baixa com a última escolha. Setinha: menu com áudio/vídeo/resolução,
+//   WhatsApp e esconder (neste vídeo / neste site).
+// - A pílula mostra o andamento (na fila → anel com o % → salvo · abrir pasta).
 // - YTA fechado: abre o app por yta://start (o Chrome pergunta uma vez) e tenta de novo.
 (() => {
   if (window.__ytaButton) return;
@@ -83,62 +84,102 @@
   const urlFor = (video, hits) =>
     isYouTube ? youtubeUrl(video, hits) : isInstagram ? instagramUrl(video) : location.href.replace(/#.*$/, '');
 
+
   /* ---------- Interface (Shadow DOM: o CSS do site não vaza para cá) ---------- */
+
+  // Ícones (traço do lucide, como no app).
+  const svg = (body, size = 14) =>
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const ICON = {
+    mark: '<span class="mark"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M6 20h12"/></svg></span>',
+    down: svg('<path d="m6 9 6 6 6-6"/>'),
+    up: svg('<path d="m18 15-6-6-6 6"/>'),
+    clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', 16),
+    pause: svg('<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>', 16),
+    check: svg('<path d="M20 6 9 17l-5-5"/>', 16),
+    alert: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/>', 16),
+    stop: svg('<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>', 16),
+    tick: svg('<path d="M20 6 9 17l-5-5"/>', 14),
+  };
+  /** Anel de andamento (16 px): trilho + arco do %; sem %, gira um pedaço. */
+  const ring = (pct) =>
+    pct == null
+      ? '<svg class="spin" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" style="stroke: var(--track)" stroke-width="2"/><circle cx="8" cy="8" r="6.5" fill="none" style="stroke: var(--accent)" stroke-width="2" stroke-linecap="round" stroke-dasharray="10 40.84"/></svg>'
+      : `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" style="stroke: var(--track)" stroke-width="2"/><circle cx="8" cy="8" r="6.5" fill="none" style="stroke: var(--accent)" stroke-width="2" stroke-linecap="round" stroke-dasharray="${((Math.max(0, Math.min(100, pct)) / 100) * 40.84).toFixed(2)} 40.84" transform="rotate(-90 8 8)"/></svg>`;
 
   const host = document.createElement('yta-overlay');
   host.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;display:none;';
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `
     <style>
-      /* Tokens do YTA (tema escuro), só para esta extensão. */
-      :host { --bg: #24262c; --bg-hover: #2c2f36; --border: rgba(255,255,255,.11); --text: #e6e7ea;
-        --muted: #a8abb2; --accent: #2f6fe4; --accent-hover: #3b7bf0; --ok: #6fd69a; --err: #ff8a8a;
-        --shadow: 0 8px 24px rgba(0,0,0,.45); all: initial; }
+      /* Tokens do YTA 2.0 (Grafite, tema escuro: o botão fica sobre vídeo), só para esta extensão. */
+      :host { --card: #17181b; --elevated: #202226; --open: #26282d; --border: #2e3136; --strong: #3a3d44;
+        --text: #edeef0; --muted: #a7acb4; --faint: #868c95; --accent: #7c9cff; --track: #34373d; --ok: #5cd38a;
+        --err: #ff7b7b; --ink: #f2f3f5; --ink-fg: #0f1012; all: initial; }
       * { box-sizing: border-box; font-family: 'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; }
-      .bar { display: flex; align-items: stretch; height: 28px; border: 1px solid var(--border); border-radius: 4px;
-        background: var(--bg); box-shadow: var(--shadow); color: var(--text); font-size: 13px; line-height: 18px; }
-      button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer; color: inherit;
-        white-space: nowrap; }
-      button:hover { background: var(--bg-hover); }
+      .pill { display: flex; align-items: center; height: 32px; border: 1px solid var(--strong); border-radius: 16px;
+        background: var(--card); box-shadow: 0 6px 20px rgba(0,0,0,.35); color: var(--text); font-size: 13px;
+        line-height: 18px; overflow: hidden; }
+      button { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; cursor: pointer;
+        color: inherit; white-space: nowrap; }
       button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-      .main { border-radius: 3px 0 0 3px; font-weight: 500; }
-      .main .logo { width: 16px; height: 16px; border-radius: 4px; background: var(--accent); display: grid; place-items: center; }
-      .arrow, .close { padding: 0 6px; border-left: 1px solid var(--border); color: var(--muted); }
-      .close { border-radius: 0 3px 3px 0; }
+      .main { height: 30px; gap: 8px; padding: 0 12px 0 6px; font-weight: 500; }
+      .main:hover, .arrow:hover { background: var(--elevated); }
+      .lead { display: inline-flex; width: 20px; justify-content: center; flex-shrink: 0; }
+      .mark { width: 20px; height: 20px; border-radius: 10px; background: var(--ink); color: var(--ink-fg);
+        display: inline-flex; align-items: center; justify-content: center; }
+      .text { display: inline-flex; align-items: center; gap: 6px; }
+      .vr { width: 1px; height: 18px; background: var(--strong); flex-shrink: 0; }
+      .arrow { width: 34px; height: 30px; justify-content: center; color: var(--muted); }
+      .arrow[aria-expanded="true"] { background: var(--open); color: var(--text); }
+      .pill.busy .vr, .pill.busy .arrow { display: none; }
       .num { font-variant-numeric: tabular-nums; }
-      .ok { color: var(--ok); } .err { color: var(--err); } .muted { color: var(--muted); }
-      .menu { position: absolute; top: 32px; left: 0; min-width: 236px; padding: 4px 0; background: var(--bg);
-        border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); color: var(--text); font-size: 12px; }
-      .menu[hidden] { display: none; }
-      .menu button { width: 100%; min-height: 28px; padding: 4px 12px; font-size: 12px; justify-content: space-between; }
-      .menu .label { padding: 6px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
-        text-transform: uppercase; color: var(--muted); }
-      .menu .check { color: var(--accent); }
-      .menu label { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; color: var(--muted); }
-      .menu input { accent-color: var(--accent); margin: 0; }
-      .sep { height: 1px; margin: 4px 0; background: var(--border); }
-      .spin { width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%;
-        animation: s 0.8s linear infinite; }
+      .muted { color: var(--muted); font-weight: 400; }
+      .ok { color: var(--ok); } .err { color: var(--err); }
+      .spin { animation: s 0.8s linear infinite; }
       @keyframes s { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+      .menu { position: absolute; top: 40px; left: 0; width: 260px; padding: 6px; background: var(--card);
+        border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.45);
+        color: var(--text); font-size: 13px; line-height: 18px; display: flex; flex-direction: column;
+        overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--strong) transparent; }
+      .menu[hidden] { display: none; }
+      .menu .item { flex-shrink: 0; height: 32px; padding: 0 10px; border-radius: 8px; gap: 8px; width: 100%; }
+      .menu .item:hover, .menu .item:focus-visible { background: var(--elevated); }
+      .menu .name { flex: 1; }
+      .menu .hint { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+      .menu .tick { width: 14px; display: inline-flex; color: var(--text); }
+      .menu .soft { color: var(--muted); }
+      .label { flex-shrink: 0; padding: 8px 10px 4px; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .06em;
+        text-transform: uppercase; color: var(--faint); }
+      .note { flex-shrink: 0; padding: 6px 10px; font-size: 12px; line-height: 16px; color: var(--faint); }
+      .sep { height: 1px; margin: 6px 4px; background: #26282c; flex-shrink: 0; }
+      .row { flex-shrink: 0; height: 36px; padding: 0 10px; display: flex; align-items: center; gap: 8px; }
+      .row span { flex: 1; }
+      .switch { width: 30px; height: 18px; flex-shrink: 0; border-radius: 9px; border: 1px solid #4a4e55;
+        position: relative; padding: 0; }
+      .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+        border-radius: 6px; background: var(--muted); }
+      .switch[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
+      .switch[aria-checked="true"]::after { left: 14px; background: var(--ink-fg); }
+      .switch:focus-visible { outline-offset: 2px; }
     </style>
-    <div class="bar" part="bar">
-      <button class="main"><span class="logo"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path d="M5 1v5M2.5 4 5 6.5 7.5 4M2 8.5h6" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></span>
-        <span class="text">YTA</span></button>
-      <button class="arrow" aria-label="Escolher formato" aria-haspopup="menu" aria-expanded="false">
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></button>
-      <button class="close" aria-label="Esconder neste vídeo">
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" stroke="currentColor" stroke-width="1.4"/></svg></button>
+    <div class="pill">
+      <button class="main"><span class="lead"></span><span class="text"></span></button>
+      <span class="vr"></span>
+      <button class="arrow" aria-label="Escolher formato" aria-haspopup="menu" aria-expanded="false"></button>
     </div>
-    <div class="menu" role="menu" hidden></div>`;
+    <div class="menu" role="menu" aria-label="Formato" hidden></div>`;
   document.documentElement.appendChild(host);
 
   const $ = (s) => root.querySelector(s);
+  const pill = $('.pill');
   const mainBtn = $('.main');
+  const leadEl = $('.lead');
   const textEl = $('.text');
   const arrowBtn = $('.arrow');
-  const closeBtn = $('.close');
   const menu = $('.menu');
+  arrowBtn.innerHTML = ICON.down;
 
   let choice = { format: 'm4a', maxHeight: null, compat: false };
   chrome.storage.sync.get('choice').then(({ choice: c }) => {
@@ -146,10 +187,9 @@
     render();
   });
 
+  const AUDIO = { m4a: 'M4A', opus: 'Opus', mp3: 'MP3' };
   const choiceLabel = (c) =>
-    c.format === 'video'
-      ? `Vídeo ${c.maxHeight ? `${c.maxHeight}p` : 'melhor'}${c.compat ? ' · H.264' : ''}`
-      : `Áudio ${c.format === 'opus' ? 'Opus' : c.format.toUpperCase()}`;
+    c.format === 'video' ? `Vídeo${c.maxHeight ? ` ${c.maxHeight}p` : ''}${c.compat ? ' · H.264' : ''}` : AUDIO[c.format] || c.format;
 
   /* ---------- Qual vídeo está sob o ponteiro ---------- */
 
@@ -180,7 +220,7 @@
   /** Destaque do Instagram: o endereço é do destaque inteiro (não muda ao passar os itens). */
   const isHighlight = () => isInstagram && /^\/stories\/highlights\//.test(location.pathname);
   let pointer = { x: 0, y: 0 };
-  const hidden = new WeakSet(); // vídeos em que o usuário clicou no ×
+  const hidden = new WeakSet(); // vídeos em que o usuário escolheu "Esconder neste vídeo"
   const jobs = new Map(); // url → { id, phase, percent, part, copy, error }
 
   function place() {
@@ -203,7 +243,8 @@
   document.addEventListener(
     'pointermove',
     (e) => {
-      if (!videos.length && !video && !isYouTube) return;
+      // Só o mouse de verdade: uma página não pode mover o botão nem baixar sem o usuário.
+      if (!e.isTrusted || (!videos.length && !video && !isYouTube)) return;
       pointer = { x: e.clientX, y: e.clientY };
       if (ticking) return;
       ticking = true;
@@ -262,45 +303,76 @@
 
   /* ---------- Estado do botão ---------- */
 
+  // Andando, o botão vira um selo de status (sem a setinha; clique abre o YTA). Parado: baixa.
+  const BUSY = ['launching', 'sending', 'queued', 'paused', 'listing', 'preparing', 'download', 'convert'];
+
+  function paint(lead, html, label, busy = false) {
+    leadEl.innerHTML = lead;
+    textEl.innerHTML = html;
+    mainBtn.setAttribute('aria-label', label);
+    pill.classList.toggle('busy', busy);
+    if (busy) closeMenu();
+  }
+
   function render() {
     const job = videoUrl ? jobs.get(videoUrl) : null;
-    mainBtn.classList.remove('busy');
-    if (!job) {
+    if (!job || job.phase === 'gone') {
       // Destaque: o yt-dlp não tem como escolher o item, então o rótulo diz que vem tudo.
       const what = isHighlight() ? 'Baixar destaque inteiro' : 'Baixar';
-      textEl.innerHTML = `${what} · ${choiceLabel(choice)}`;
-      mainBtn.setAttribute('aria-label', `${what} com o YTA: ${choiceLabel(choice)}`);
-      return;
+      return paint(ICON.mark, `${what} <span class="muted">${choiceLabel(choice)}</span>`, `${what} com o YTA: ${choiceLabel(choice)}`);
     }
-    const pct = job.percent == null ? '' : ` <span class="num">${Math.floor(job.percent)}%</span>`;
-    const states = {
-      launching: '<span class="spin"></span> Abrindo o YTA…',
-      sending: '<span class="spin"></span> Enviando…',
-      queued: '<span class="muted">Na fila do YTA</span>',
-      paused: '<span class="muted">Pausado no YTA</span>',
-      listing: '<span class="spin"></span> Lendo a playlist…',
-      preparing: '<span class="spin"></span> Buscando…',
-      download: `<span class="spin"></span> Baixando${job.part === 'audio' ? ' áudio' : ''}${pct}`,
-      convert: `<span class="spin"></span> ${job.copy === false ? 'Convertendo' : 'Finalizando'}${pct}`,
-      done: '<span class="ok">Salvo</span> · Abrir pasta',
-      error: `<span class="err">Falhou</span> · ${escapeHtml(job.error || 'ver no YTA')}`,
-      cancelled: '<span class="muted">Cancelado</span> · Baixar de novo',
-      offline: '<span class="err">YTA fechado</span> · Abrir o YTA',
-      gone: `Baixar · ${choiceLabel(choice)}`,
-    };
-    textEl.innerHTML = states[job.phase] || states.queued;
+    const pct = job.percent == null ? null : Math.floor(job.percent);
+    const num = pct == null ? '' : ` <span class="num">${pct}%</span>`;
+    switch (job.phase) {
+      case 'launching':
+        return paint(ring(null), 'Abrindo o YTA…', 'Abrindo o YTA', true);
+      case 'sending':
+        return paint(ring(null), 'Enviando…', 'Enviando para o YTA', true);
+      case 'listing':
+        return paint(ring(null), 'Lendo a playlist…', 'Lendo a playlist no YTA; abrir o YTA', true);
+      case 'preparing':
+        return paint(ring(null), 'Buscando…', 'Buscando o vídeo no YTA; abrir o YTA', true);
+      case 'paused':
+        return paint(`<span class="muted">${ICON.pause}</span>`, '<span class="muted">Pausado no YTA</span>', 'Pausado no YTA; abrir o YTA', true);
+      case 'download': {
+        const what = `Baixando${job.part === 'audio' ? ' áudio' : ''}`;
+        return paint(ring(pct), `${what}${num}`, `${what} ${pct ?? ''}%; abrir o YTA`, true);
+      }
+      case 'convert': {
+        const what = job.copy === false ? 'Convertendo' : 'Finalizando';
+        return paint(ring(pct), `${what}${num}`, `${what}; abrir o YTA`, true);
+      }
+      case 'done':
+        return paint(`<span class="ok">${ICON.check}</span>`, '<span class="ok">Salvo</span><span class="vr"></span>Abrir pasta', 'Salvo. Abrir a pasta');
+      case 'error':
+        return paint(
+          `<span class="err">${ICON.alert}</span>`,
+          `<span class="err">Falhou</span><span class="muted">· ${escapeHtml(job.error || 'ver no YTA')}</span>`,
+          `Falhou: ${job.error || ''}. Abrir o YTA`,
+        );
+      case 'cancelled':
+        return paint(`<span class="muted">${ICON.stop}</span>`, '<span class="muted">Cancelado ·</span> Baixar de novo', 'Cancelado. Baixar de novo');
+      case 'offline':
+        return paint(`<span class="err">${ICON.alert}</span>`, '<span class="err">YTA fechado</span> · Abrir o YTA', 'YTA fechado. Abrir o YTA e baixar');
+      default: // queued (e o que vier de novo)
+        return paint(`<span class="muted">${ICON.clock}</span>`, '<span class="muted">Na fila do YTA</span>', 'Na fila do YTA; abrir o YTA', true);
+    }
   }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]).slice(0, 60);
   }
 
+  const dec = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const bytes = (n) =>
+    !Number.isFinite(n) || n <= 0 ? '' : n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : n < 1073741824 ? `${dec.format(n / 1048576)} MB` : `${dec.format(n / 1073741824)} GB`;
+
   /* ---------- Ações ---------- */
 
   async function download(request) {
     const url = videoUrl;
     if (!url) {
-      textEl.innerHTML = '<span class="err">Não achei o link deste vídeo</span>';
+      paint(`<span class="err">${ICON.alert}</span>`, '<span class="err">Não achei o link deste vídeo</span>', 'Não achei o link deste vídeo');
       setTimeout(render, 3000);
       return;
     }
@@ -351,47 +423,57 @@
     }
   }
 
-  mainBtn.addEventListener('click', () => {
+  mainBtn.addEventListener('click', (e) => {
+    if (!e.isTrusted) return; // .click() da página não baixa nada
     refreshUrl(); // o vídeo pode ter trocado desde o último movimento do mouse
     const job = videoUrl && jobs.get(videoUrl);
     if (job?.phase === 'done') return ask({ type: 'reveal', id: job.id });
-    if (job?.phase === 'error' || job?.phase === 'offline') {
-      if (job.phase === 'offline') jobs.delete(videoUrl);
-      else return ask({ type: 'show' });
-    }
-    if (job && !['cancelled', 'gone', 'offline'].includes(job.phase)) return; // já está andando
+    if (job?.phase === 'error') return ask({ type: 'show' });
+    if (job?.phase === 'launching' || job?.phase === 'sending') return; // já está indo
+    if (job && BUSY.includes(job.phase)) return ask({ type: 'show' }); // andando: o YTA mostra o resto
+    if (job?.phase === 'offline') jobs.delete(videoUrl);
     download(choice);
   });
 
-  closeBtn.addEventListener('click', () => {
-    if (video) hidden.add(video);
-    closeMenu();
-    host.style.display = 'none';
-  });
-
-  /* ---------- Menu ---------- */
+  /* ---------- Menu (setinha): formato, WhatsApp e esconder ---------- */
 
   const menuOpen = () => !menu.hidden;
   function closeMenu() {
+    if (menu.hidden) return;
     menu.hidden = true;
     arrowBtn.setAttribute('aria-expanded', 'false');
+    arrowBtn.innerHTML = ICON.down;
   }
 
-  async function openMenu() {
+  // Resoluções e tamanhos do último link consultado (reabrir o menu não espera de novo).
+  let probed = { url: null, info: null };
+  async function openMenu(viaKeyboard) {
+    // Cabe na janela: perto do pé da página o menu rola em vez de sair da tela.
+    menu.style.maxHeight = `${Math.max(160, innerHeight - pill.getBoundingClientRect().bottom - 20)}px`;
     menu.hidden = false;
     arrowBtn.setAttribute('aria-expanded', 'true');
-    buildMenu(null);
-    if (!videoUrl) return;
-    const p = await ask({ type: 'probe', url: videoUrl });
-    if (menuOpen()) buildMenu(p?.ok ? p.heights : []);
+    arrowBtn.innerHTML = ICON.up;
+    const url = videoUrl;
+    const cached = url && probed.url === url ? probed.info : null;
+    buildMenu(cached, Boolean(url) && !cached);
+    if (viaKeyboard) menu.querySelector('button')?.focus();
+    if (!url || cached) return;
+    const p = await ask({ type: 'probe', url });
+    if (p?.ok) probed = { url, info: p };
+    if (menuOpen() && videoUrl === url) buildMenu(p?.ok ? p : null, false);
   }
 
-  function buildMenu(heights) {
-    const item = (label, active, onClick) => {
-      const b = document.createElement('button');
-      b.setAttribute('role', 'menuitem');
-      b.innerHTML = `<span>${label}</span>${active ? '<span class="check">✓</span>' : ''}`;
-      b.addEventListener('click', onClick);
+  const VIDEO_CAPS = [2160, 1440, 1080, 720, 480, 360];
+  function buildMenu(info, loading) {
+    const focused = root.activeElement?.dataset?.key; // reconstruir não tira o foco do teclado
+    const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text || '' });
+    const item = (key, name, hint, checked, onClick, cls = '') => {
+      const b = el('button', `item ${cls}`);
+      b.dataset.key = key;
+      b.setAttribute('role', checked == null ? 'menuitem' : 'menuitemradio');
+      if (checked != null) b.setAttribute('aria-checked', String(checked));
+      b.innerHTML = `<span class="name">${name}</span>${hint ? `<span class="hint">${hint}</span>` : ''}${checked != null ? `<span class="tick">${checked ? ICON.tick : ''}</span>` : ''}`;
+      b.addEventListener('click', (e) => e.isTrusted && onClick(e));
       return b;
     };
     const pick = (c) => {
@@ -401,49 +483,76 @@
       render();
       download(choice);
     };
-    menu.replaceChildren();
-    const audio = document.createElement('div');
-    audio.className = 'label';
-    audio.textContent = 'Áudio';
-    menu.append(audio);
-    for (const f of FORMATS) menu.append(item(f.label.replace('Áudio ', ''), choice.format === f.key, () => pick({ ...choice, format: f.key })));
-    const sep = document.createElement('div');
-    sep.className = 'sep';
-    const vid = document.createElement('div');
-    vid.className = 'label';
-    vid.textContent = 'Vídeo';
-    menu.append(sep, vid);
-    menu.append(item('Melhor disponível', choice.format === 'video' && !choice.maxHeight, () => pick({ ...choice, format: 'video', maxHeight: null })));
-    if (heights === null) {
-      const wait = document.createElement('div');
-      wait.className = 'label';
-      wait.style.textTransform = 'none';
-      wait.textContent = 'Carregando resoluções…';
-      menu.append(wait);
-    } else {
-      for (const h of heights.filter((x) => x <= 2160)) {
-        menu.append(item(`${h}p`, choice.format === 'video' && choice.maxHeight === h, () => pick({ ...choice, format: 'video', maxHeight: h })));
-      }
+    const isVideo = choice.format === 'video'; // (video, sem sufixo, é o elemento sob o ponteiro)
+    const sizes = info?.sizes || {};
+
+    menu.replaceChildren(el('div', 'label', 'Áudio'));
+    for (const [key, name] of Object.entries(AUDIO)) {
+      const hint = key === 'mp3' ? 'convertido' : sizes[key] ? `~${bytes(sizes[key])}` : 'original';
+      menu.append(item(key, name, hint, choice.format === key, () => pick({ ...choice, format: key })));
     }
-    const compat = document.createElement('label');
-    compat.innerHTML = `<input type="checkbox" ${choice.compat ? 'checked' : ''}> Compatível com WhatsApp (H.264)`;
-    compat.querySelector('input').addEventListener('change', (e) => {
-      choice = { ...choice, compat: e.target.checked };
+
+    menu.append(el('div', 'sep'), el('div', 'label', 'Vídeo'));
+    // Como no app: com as resoluções do vídeo, "Melhor" diz qual é e as outras trazem o tamanho;
+    // sem elas, tetos ("Até 720p").
+    const heights = (info?.heights || []).filter((h) => h <= 4320);
+    const exact = heights.length > 0;
+    menu.append(item('best', 'Melhor', exact ? `${heights[0]}p` : '', isVideo && !choice.maxHeight, () => pick({ ...choice, format: 'video', maxHeight: null })));
+    if (loading) menu.append(el('div', 'note', 'Carregando resoluções…'));
+    else
+      for (const h of exact ? heights.slice(1) : VIDEO_CAPS) {
+        const size = exact ? bytes(info.videoSizes?.[h]) : '';
+        menu.append(item(`h${h}`, exact ? `${h}p` : `Até ${h}p`, size ? `~${size}` : '', isVideo && choice.maxHeight === h, () => pick({ ...choice, format: 'video', maxHeight: h })));
+      }
+
+    const row = el('div', 'row');
+    row.append(el('span', '', 'Compatível com WhatsApp'));
+    const sw = el('button', 'switch');
+    sw.dataset.key = 'compat';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-label', 'Compatível com WhatsApp (vídeo em H.264)');
+    sw.setAttribute('aria-checked', String(Boolean(choice.compat)));
+    sw.addEventListener('click', (e) => {
+      if (!e.isTrusted) return;
+      choice = { ...choice, compat: !choice.compat };
       chrome.storage.sync.set({ choice });
+      sw.setAttribute('aria-checked', String(choice.compat));
       render();
     });
-    menu.append(compat);
-    const sep2 = document.createElement('div');
-    sep2.className = 'sep';
-    menu.append(sep2, item(`Não mostrar em ${topHost.replace(/^www\./, '')}`, false, async () => {
-      const { hiddenSites = [] } = await chrome.storage.sync.get('hiddenSites');
-      await chrome.storage.sync.set({ hiddenSites: [...new Set([...hiddenSites, topHost])] });
-      closeMenu();
-      host.style.display = 'none';
-    }));
+    row.append(sw);
+    menu.append(el('div', 'sep'), row, el('div', 'sep'));
+
+    menu.append(
+      item('hide', 'Esconder neste vídeo', '', null, () => {
+        if (video) hidden.add(video);
+        closeMenu();
+        host.style.display = 'none';
+      }, 'soft'),
+      item('site', `Não mostrar em ${topHost.replace(/^www\./, '')}`, '', null, async () => {
+        const { hiddenSites = [] } = await chrome.storage.sync.get('hiddenSites');
+        await chrome.storage.sync.set({ hiddenSites: [...new Set([...hiddenSites, topHost])] });
+        closeMenu();
+        host.style.display = 'none';
+      }, 'soft'),
+    );
+    if (focused) menu.querySelector(`[data-key="${focused}"]`)?.focus();
   }
 
-  arrowBtn.addEventListener('click', () => (menuOpen() ? closeMenu() : openMenu()));
+  // Teclado: ↑↓ andam pelos itens, Esc fecha e volta para a setinha.
+  menu.addEventListener('keydown', (e) => {
+    const list = [...menu.querySelectorAll('button')];
+    const i = list.indexOf(root.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      list[e.key === 'ArrowDown' ? (i + 1) % list.length : (i - 1 + list.length) % list.length]?.focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu();
+      arrowBtn.focus();
+    }
+  });
+  // detail 0 = ativado pelo teclado: o foco entra no menu.
+  arrowBtn.addEventListener('click', (e) => e.isTrusted && (menuOpen() ? closeMenu() : openMenu(e.detail === 0)));
   document.addEventListener('keydown', (e) => e.key === 'Escape' && closeMenu());
   document.addEventListener('pointerdown', (e) => {
     if (!e.composedPath().includes(host)) closeMenu();

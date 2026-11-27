@@ -1,55 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, FolderOpen, Pause, Play, RotateCw } from 'lucide-react';
-import { Button, Field } from './ui.jsx';
+import { Download, FolderOpen, Pause, Play, RotateCw } from 'lucide-react';
+import { Button, Mark } from './ui.jsx';
+import { Thumb } from './DownloadList.jsx';
+import { ACTIVE, bytes, decimal, duration, FORMAT_LABEL, phaseText, ytThumb } from './labels.js';
 
 /*
  * Janelas pequenas do acelerador (como as do IDM, sem o resto):
  * - "ask": o YTA assumiu um download do navegador — nome, pasta, lembrar a pasta, baixar/cancelar;
  * - "progress": andamento de um item que veio do navegador (download capturado ou botão do vídeo):
  *   baixando → pausado → concluído/erro, na mesma janela, com as ações da fila (Pausar, Cancelar…).
- * Cada uma é uma janela própria do Electron; a altura segue o conteúdo (dialogFit).
+ * Cada uma é uma janela própria do Electron; a altura segue o conteúdo (dialogFit). A faixa de
+ * título é do app (os 3 botões do Windows ficam por cima, à direita).
  */
 const api = window.yta;
-
-const decimal = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-function bytes(n) {
-  if (!n) return null;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  if (n < 1024 ** 3) return `${decimal.format(n / 1024 / 1024)} MB`;
-  return `${decimal.format(n / 1024 ** 3)} GB`;
-}
-function duration(s) {
-  if (s === null || s === undefined) return null;
-  const m = Math.floor(s / 60);
-  const r = Math.floor(s % 60);
-  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
-}
-const ACTIVE = ['preparing', 'download', 'convert'];
-const FORMAT_LABEL = { m4a: 'M4A', opus: 'Opus', mp3: 'MP3', video: 'MP4' };
-
-/** O que está acontecendo, nas palavras da fila (QueueItem). */
-function phaseText(it) {
-  if (it.pausing && ACTIVE.includes(it.phase)) return 'Pausando…';
-  switch (it.phase) {
-    case 'queued':
-      return 'Na fila';
-    case 'preparing':
-      return it.kind === 'file' ? 'Conectando…' : it.retry === 'browser' ? 'Buscando com o login do YTA…' : it.retry ? 'Tentando de novo…' : 'Buscando o vídeo…';
-    case 'download':
-      return it.part === 'video' ? 'Baixando vídeo' : it.part === 'audio' ? 'Baixando áudio' : 'Baixando';
-    case 'convert':
-      if (it.format === 'video') return it.copy === false ? 'Convertendo para H.264' : 'Juntando vídeo e áudio';
-      return it.copy ? 'Finalizando' : `Convertendo para ${FORMAT_LABEL[it.format] || it.format}`;
-    case 'paused':
-      return 'Pausado';
-    case 'done':
-      return 'Concluído';
-    case 'error':
-      return 'Falhou';
-    default:
-      return '';
-  }
-}
 
 export default function DownloadDialog({ kind }) {
   const [data, setData] = useState(null);
@@ -75,10 +38,19 @@ export default function DownloadDialog({ kind }) {
   );
 }
 
+function TitleStrip({ children }) {
+  return (
+    <div className="drag-region flex h-titlebar-sm items-center gap-2 pl-3.5 pr-caption">
+      <Mark size={16} />
+      <span className="min-w-0 truncate text-minor text-text-secondary">{children}</span>
+    </div>
+  );
+}
+
 function Check({ checked, onChange, children }) {
   return (
-    <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-minor text-text-secondary">
-      <input type="checkbox" className="size-3.5 accent-accent-solid" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className="flex shrink-0 cursor-pointer items-center gap-2 text-minor text-text-secondary">
+      <input type="checkbox" className="size-4 accent-ink" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       {children}
     </label>
   );
@@ -91,11 +63,6 @@ function Ask({ data }) {
   const [dontAsk, setDontAsk] = useState(false);
   const [taken, setTaken] = useState(null); // nome que vai sair se este já existir
   const nameRef = useRef(null);
-  const folderRef = useRef(null);
-  // Caminho longo: mostra o fim (o nome da pasta), não o começo (C:\Users\…).
-  useEffect(() => {
-    if (folderRef.current) folderRef.current.scrollLeft = folderRef.current.scrollWidth;
-  }, [folder]);
 
   useEffect(() => {
     // Seleciona o nome sem a extensão (renomear é o caso comum; a extensão fica).
@@ -125,54 +92,77 @@ function Ask({ data }) {
     api.dialogAnswer({ action: 'download', name: name.trim(), folder, remember, dontAsk });
   }
 
-  const meta = [bytes(data.size), data.host].filter(Boolean).join(' · ');
+  const meta = [bytes(data.size), data.host, 'baixa em até 8 conexões'].filter(Boolean).join(' · ');
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4 p-5" noValidate>
-      <Field label="Nome do arquivo" hint={taken ? `Já existe; vai salvar como “${taken}”.` : meta}>
-        {({ id, describedBy }) => (
-          <input
-            ref={nameRef}
-            id={id}
-            className="input-field"
-            data-focus-quiet
-            spellCheck={false}
-            autoComplete="off"
-            value={name}
-            aria-describedby={describedBy}
-            onChange={(e) => setName(e.target.value)}
-          />
-        )}
-      </Field>
-      <div className="flex flex-col gap-2">
-        <Field label="Salvar em">
-          {({ id }) => (
+    <>
+      <TitleStrip>Baixar arquivo</TitleStrip>
+      <form onSubmit={submit} className="flex flex-col" noValidate>
+        <div className="flex flex-col gap-5 px-6 pb-5 pt-4">
+          <div className="flex items-start gap-3.5">
+            <Thumb kind="file" name={name || data.name} />
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <label htmlFor="nome-arquivo" className="sr-only">
+                Nome do arquivo
+              </label>
+              <input
+                id="nome-arquivo"
+                ref={nameRef}
+                className="input-field h-9 font-mono text-minor"
+                data-focus-quiet
+                spellCheck={false}
+                autoComplete="off"
+                value={name}
+                aria-describedby="nome-dica"
+                onChange={(e) => setName(e.target.value)}
+              />
+              <p id="nome-dica" className="truncate text-minor text-text-tertiary tabular-nums">
+                {taken ? `Já existe; vai salvar como “${taken}”.` : meta}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span id="salvar-em" className="text-minor text-text-secondary">
+              Salvar em
+            </span>
             <div className="flex gap-2">
-              <input ref={folderRef} id={id} className="input-field min-w-0 font-mono text-text-secondary" data-focus-quiet readOnly value={folder} onDoubleClick={choose} />
-              <Button onClick={choose} className="shrink-0">
-                <FolderOpen size={16} aria-hidden />
-                Escolher…
+              <button
+                type="button"
+                aria-labelledby="salvar-em"
+                onClick={choose}
+                className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-control border border-border-strong bg-bg-input px-2.5 text-left"
+              >
+                <FolderOpen size={16} aria-hidden className="shrink-0 text-text-tertiary" />
+                <span className="min-w-0 truncate font-mono text-minor" dir="rtl">
+                  <bdi>{folder}</bdi>
+                </span>
+              </button>
+              <Button className="h-9" onClick={choose}>
+                Alterar…
               </Button>
             </div>
-          )}
-        </Field>
-        <Check checked={remember} onChange={setRemember}>
-          Lembrar esta pasta
-        </Check>
-      </div>
-      <div className="flex items-center gap-2 border-t border-border-subtle pt-4">
-        <Check checked={dontAsk} onChange={setDontAsk}>
-          Não perguntar de novo
-        </Check>
-        <span className="flex-1" />
-        <Button variant="ghost" onClick={() => api.dialogAnswer({ action: 'cancel' })}>
-          Cancelar
-        </Button>
-        <Button type="submit" variant="primary" disabled={!name.trim()}>
-          <Download size={16} aria-hidden />
-          Baixar
-        </Button>
-      </div>
-    </form>
+            <div className="mt-1.5">
+              <Check checked={remember} onChange={setRemember}>
+                Lembrar esta pasta
+              </Check>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 border-t border-border-subtle px-6 pb-4 pt-3.5">
+          <Check checked={dontAsk} onChange={setDontAsk}>
+            Não perguntar de novo
+          </Check>
+          <span className="flex-1" />
+          <Button variant="ghost" onClick={() => api.dialogAnswer({ action: 'cancel' })}>
+            Cancelar
+          </Button>
+          <Button type="submit" variant="primary" disabled={!name.trim()}>
+            <Download size={16} aria-hidden />
+            Baixar
+          </Button>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -242,72 +232,80 @@ function Progress({ data }) {
   const many = (it.files?.length || 0) > 1;
   const act = (action) => api.itemAction(action);
   const hide = () => api.dialogAnswer({ action: 'close' });
+  const title =
+    it.phase === 'done' ? `Concluído · ${name}` : it.phase === 'error' ? `Falhou · ${name}` : it.phase === 'paused' ? `Pausado · ${name}` : `${Math.floor(percent || 0)}% · ${name}`;
 
   return (
-    <div className="flex flex-col gap-3 p-5">
-      <div className="flex min-w-0 items-center gap-3">
-        {it.phase === 'done' && <CheckCircle2 size={16} aria-hidden className="shrink-0 text-success-fg" />}
-        {it.phase === 'error' && <AlertCircle size={16} aria-hidden className="shrink-0 text-danger-fg" />}
-        <p className={`min-w-0 flex-1 truncate text-body text-text-primary ${file ? 'font-mono' : ''}`}>{name}</p>
-        <span
-          className={`shrink-0 text-body font-medium tabular-nums ${
-            it.phase === 'done' ? 'text-success-fg' : it.phase === 'error' ? 'text-danger-fg' : it.phase === 'paused' ? 'text-text-secondary' : 'text-text-primary'
-          }`}
-        >
-          {it.phase === 'done' ? 'Concluído' : it.phase === 'error' ? 'Falhou' : `${Math.floor(percent || 0)}%`}
-        </span>
-      </div>
-      <div
-        role="progressbar"
-        aria-label={phaseText(it)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.floor(percent || 0)}
-        className="h-1.5 overflow-hidden rounded-full bg-bg-elevated"
-      >
-        <div
-          className={`h-full origin-left motion-ok:transition-transform motion-ok:duration-(--motion-base) ${
-            it.phase === 'done' ? 'bg-success-fg' : it.phase === 'paused' || it.phase === 'error' ? 'bg-text-tertiary' : 'bg-accent-solid'
-          }`}
-          style={{ transform: `scaleX(${(percent || 0) / 100})` }}
-        />
-      </div>
-      <p className="truncate text-caption text-text-tertiary" aria-live="polite">
-        {it.phase !== 'done' && it.phase !== 'error' && (
-          <>
-            <span className="text-text-secondary">{phaseText(it)}</span>
-            <span aria-hidden> · </span>
-          </>
-        )}
-        {it.host}
-        {it.folder && (
-          <>
-            <span aria-hidden> → </span>
-            <span className="font-mono">{it.folder}</span>
-          </>
-        )}
-      </p>
-      {it.phase === 'error' ? (
-        <p className="text-minor text-danger-fg" role="alert">
-          {it.error || 'O download falhou.'}
-        </p>
-      ) : (
-        <div className="grid grid-cols-[3fr_2fr_2fr_2fr] gap-3">
-          {cells.map(([label, value]) => (
-            <div key={label} className="flex min-w-0 flex-col gap-0.5">
-              <span className="label-micro text-text-tertiary">{label}</span>
-              <span className={`truncate text-body tabular-nums ${value === dash || value === 'Pausado' ? 'text-text-secondary' : 'text-text-primary'}`}>
-                {value}
-              </span>
-            </div>
-          ))}
+    <>
+      <TitleStrip>{title}</TitleStrip>
+      <div className="flex flex-col gap-4 px-6 pb-5 pt-4">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <Thumb src={it.thumb || ytThumb(it.url)} kind={file ? 'file' : it.format === 'video' ? 'video' : 'audio'} name={name} />
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <p className={`truncate ${file ? 'font-mono text-minor leading-[inherit]' : ''}`}>{name}</p>
+            <p className="truncate text-minor text-text-tertiary" aria-live="polite">
+              {it.phase !== 'done' && it.phase !== 'error' && (
+                <>
+                  <span className="text-text-secondary">{phaseText(it)}</span>
+                  <span aria-hidden> · </span>
+                </>
+              )}
+              {it.host}
+              {it.folder && (
+                <>
+                  <span aria-hidden> → </span>
+                  <span className="font-mono">{it.folder}</span>
+                </>
+              )}
+            </p>
+          </div>
+          <span
+            className={`shrink-0 font-display tabular-nums ${
+              it.phase === 'done'
+                ? 'text-body font-medium text-success-fg'
+                : it.phase === 'error'
+                  ? 'text-body font-medium text-danger-fg'
+                  : `text-title font-semibold ${it.phase === 'paused' ? 'text-text-secondary' : ''}`
+            }`}
+          >
+            {it.phase === 'done' ? 'Concluído' : it.phase === 'error' ? 'Falhou' : `${Math.floor(percent || 0)}%`}
+          </span>
         </div>
-      )}
-      <div className="flex items-center gap-2 border-t border-border-subtle pt-4">
+        <div
+          role="progressbar"
+          aria-label={phaseText(it)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.floor(percent || 0)}
+          className="h-1 overflow-hidden rounded-full bg-track"
+        >
+          <div
+            className={`h-full origin-left motion-ok:transition-transform motion-ok:duration-(--motion-base) ${
+              it.phase === 'done' ? 'bg-success-fg' : it.phase === 'paused' || it.phase === 'error' ? 'bg-text-tertiary' : 'bg-accent-solid'
+            }`}
+            style={{ transform: `scaleX(${(percent || 0) / 100})` }}
+          />
+        </div>
+        {it.phase === 'error' ? (
+          <p className="text-minor text-danger-fg" role="alert">
+            {it.error || 'O download falhou.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-[3fr_2fr_2fr_2fr] gap-3">
+            {cells.map(([label, value]) => (
+              <div key={label} className="flex min-w-0 flex-col gap-0.5">
+                <span className="label-micro text-text-tertiary">{label}</span>
+                <span className={`truncate tabular-nums ${value === dash || value === 'Pausado' ? 'text-text-secondary' : 'text-text-primary'}`}>{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2 border-t border-border-subtle px-6 pb-4 pt-3.5">
         <Check
           checked={dontShow}
           onChange={(v) => {
-            setDontShow(v); // vale na hora; religa na bandeja ou no popup da extensão
+            setDontShow(v); // vale na hora; religa nos Ajustes, na bandeja ou no popup da extensão
             api.setDownloadPrefs({ showProgress: !v });
           }}
         >
@@ -370,6 +368,6 @@ function Progress({ data }) {
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }

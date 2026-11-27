@@ -1,8 +1,8 @@
 /* YTA — fundações visuais (Tailwind 4). Ponto de partida da diretriz-visual (SKILL.md).
-   Uso: copiar para o frontend e importar no index.css, ou colar no lugar do index.css inicial.
-   Este é o ÚNICO lugar com cor literal; componentes consomem os papéis (bg-bg-surface,
-   text-text-secondary, border-border-default…). Os valores de cor são um começo — validar o
-   contraste (texto 4,5:1, não-texto 3:1) antes de fechar a paleta. */
+   Este é o ÚNICO lugar com cor literal; componentes consomem os papéis (bg-bg-card,
+   text-text-secondary, border-border-default…). Paleta "Grafite" (2.0, nov/2026): neutros quase
+   sem matiz, a TINTA (branco no escuro, quase preto no claro) para a ação principal e o azul só
+   para o que está andando (progresso) e para o foco. Contraste conferido: texto 4,5:1, não-texto 3:1. */
 
 @import "tailwindcss";
 
@@ -16,7 +16,10 @@
   --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
   --font-small: 'Segoe UI Variable Small', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  /* Consolas primeiro (2.0): a Cascadia Mono do Windows 11 é variável e, na janela do app, o
+     Chromium a desenha pesada a 12–13 px (parece negrito ao lado da Segoe) — nem o eixo wght nem o
+     peso 350 corrigem de forma estável. A Consolas é estática e está em todo Windows. */
+  --font-mono: Consolas, 'Cascadia Mono', ui-monospace, monospace;
 
   /* Rampa única: tamanho E altura de linha. 11px é o piso. */
   --text-caption: 11px;
@@ -38,83 +41,101 @@
   /* Decisão do projeto (diretriz §9): desacelerada e mais curta que a entrada. */
   --ease-exit: cubic-bezier(0.23, 1, 0.32, 1);
 
-  /* ── Raio por papel ─────────────────────────────────────────────────────── */
-  --radius-control: 4px;
-  --radius-overlay: 8px;
+  /* ── Raio por papel (2.0: mais macio) ───────────────────────────────────── */
+  --radius-thumb: 6px;     /* miniatura de item */
+  --radius-control: 8px;   /* botão, campo, pílula de escolha */
+  --radius-inner: 6px;     /* opção dentro de um controle de 8 px com 2 px de folga (aninhado) */
+  --radius-card: 12px;     /* barra do link, cartão da prévia */
+  --radius-overlay: 12px;  /* menu, tooltip */
   --radius-dialog: 12px;
 
   /* ── Faixas fixas (→ h-titlebar, h-band, h-statusbar) ──────────────────── */
-  --spacing-titlebar: 40px;
-  --spacing-band: 44px;
-  --spacing-statusbar: 26px;
+  --spacing-titlebar: 44px;     /* barra de título própria da janela principal */
+  --spacing-titlebar-sm: 36px;  /* janelas pequenas (Baixar arquivo, andamento) */
+  --spacing-band: 32px;         /* cabeçalho de seção da lista */
+  --spacing-bar: 52px;          /* barra do link */
+  --spacing-caption: 138px;     /* os 3 botões do Windows (46 px cada) à direita */
 
   /* ── Cor: papéis, valores do tema ESCURO (padrão) ──────────────────────── */
-  --color-bg-base: #121316;
-  --color-bg-surface: #17181c;
-  --color-bg-card: #1d1f24;
-  --color-bg-elevated: #24262c;
-  --color-bg-input: #0f1013;
+  --color-bg-base: #0f1012;
+  --color-bg-surface: #141518;   /* painel (Ajustes) */
+  --color-bg-card: #17181b;      /* barra do link, cartão, menu, linha em foco */
+  --color-bg-elevated: #202226;  /* miniatura sem imagem, botão secundário, escolha marcada */
+  --color-bg-input: #17181b;
 
-  --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-default: rgba(255, 255, 255, 0.11);
-  --color-border-strong: rgba(255, 255, 255, 0.17);
+  --color-border-subtle: #222428;
+  --color-border-default: #2a2c31;
+  --color-border-strong: #3a3d44;
 
-  --color-text-primary: #e6e7ea;
-  --color-text-secondary: #a8abb2;
-  --color-text-tertiary: #80848e;
+  --color-text-primary: #edeef0;
+  --color-text-secondary: #a7acb4;
+  --color-text-tertiary: #868c95;   /* 4,7:1 sobre o card; não usar sobre bg-elevated */
   --color-text-disabled: #4c4f57;
-  /* Tinta de botão só de ícone: entre secondary e tertiary. */
-  --color-text-icon: color-mix(in srgb, var(--color-text-secondary) 50%, var(--color-text-tertiary));
+  /* Tinta de botão só de ícone: a secundária (ícone precisa de 3:1). */
+  --color-text-icon: #a7acb4;
 
-  --color-accent: #8ab4ff;              /* texto/ícone em accent */
-  --color-accent-solid: #2f6fe4;        /* preenchimento */
-  --color-accent-solid-hover: #3b7bf0;  /* hover que se AFASTA da tinta, nunca /80 */
-  --color-accent-ink: #ffffff;          /* texto sobre accent-solid */
+  /* Tinta: a ação principal, interruptor ligado, marca do app. Hover se afasta do fundo. */
+  --color-ink: #f2f3f5;
+  --color-ink-hover: #ffffff;
+  --color-ink-fg: #0f1012;
+
+  --color-accent: #8ea6ff;              /* texto/ícone em accent (raro) */
+  --color-accent-solid: #7c9cff;        /* progresso andando, anel de foco */
+  --color-accent-solid-hover: #93adff;
+  --color-accent-ink: #0f1012;
+  --color-track: #26282c;               /* trilho das barras de progresso */
 
   /* Semânticos: tom cru = preenchimento/tinta; -fg = texto/ícone; -ink = texto sobre sólido. */
   --color-danger: #e05252;
-  --color-danger-fg: #ff8a8a;
+  --color-danger-fg: #ff7b7b;
   --color-danger-ink: #ffffff;
   --color-danger-solid: #c93a3a;
   --color-success: #3fb871;
-  --color-success-fg: #6fd69a;
+  --color-success-fg: #5cd38a;
   --color-warning: #e8b13b;
   --color-warning-fg: #f2c66b;
 
-  --color-scrim: rgba(0, 0, 0, 0.35);
-  --color-scrim-strong: rgba(0, 0, 0, 0.6);
-  /* Lavagem neutra de hover para segmentos sobre superfícies variadas. */
+  --color-scrim: rgba(5, 6, 7, 0.45);
+  --color-scrim-strong: rgba(5, 6, 7, 0.64);
+  /* Lavagem neutra de hover para botões sobre superfícies variadas. */
   --color-wash-hover: rgba(127, 127, 127, 0.16);
 }
 
 /* ── Tema CLARO: os mesmos papéis, outros valores ─────────────────────────── */
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-bg-base: #f3f4f6;
-  --color-bg-surface: #fafafb;
+  --color-bg-base: #f7f7f5;
+  --color-bg-surface: #fbfbfa;
   --color-bg-card: #ffffff;
-  --color-bg-elevated: #eef0f3;
+  --color-bg-elevated: #efefec;
   --color-bg-input: #ffffff;
-  --color-border-subtle: rgba(0, 0, 0, 0.07);
-  --color-border-default: rgba(0, 0, 0, 0.13);
-  --color-border-strong: rgba(0, 0, 0, 0.2);
-  --color-text-primary: #1b1d21;
-  --color-text-secondary: #4a4e57;
-  --color-text-tertiary: #676c76;
+  --color-border-subtle: #ebebe8;
+  --color-border-default: #e2e2de;
+  --color-border-strong: #c9c9c3;
+  --color-text-primary: #17181a;
+  --color-text-secondary: #4d5157;
+  --color-text-tertiary: #6b7077;   /* 4,7:1 sobre o fundo; não usar sobre bg-elevated */
   --color-text-disabled: #a6aab2;
-  --color-accent: #1f5fd1;
-  --color-accent-solid: #1f5fd1;
-  --color-accent-solid-hover: #2a6ae0;
+  --color-text-icon: #4d5157;
+  --color-ink: #17181a;
+  --color-ink-hover: #2c2e32;
+  --color-ink-fg: #ffffff;
+  --color-accent: #2f50d6;
+  --color-accent-solid: #3557e0;
+  --color-accent-solid-hover: #2a4bd0;
   --color-accent-ink: #ffffff;
+  --color-track: #e6e6e2;
   --color-danger: #d64545;
-  --color-danger-fg: #b42323;
+  --color-danger-fg: #c9302c;
   --color-danger-solid: #c93a3a;
   --color-success: #2a9d5c;
-  --color-success-fg: #1d7a45;
+  --color-success-fg: #18794a;
   --color-warning: #d99a1e;
   --color-warning-fg: #8a5a00;
-  --shadow-overlay: 0 6px 20px rgba(20, 30, 50, 0.14);
-  --shadow-dialog: 0 16px 40px rgba(20, 30, 50, 0.2);
+  --color-scrim: rgba(20, 22, 26, 0.18);
+  --color-scrim-strong: rgba(20, 22, 26, 0.32);
+  --shadow-overlay: 0 8px 24px rgba(20, 22, 26, 0.12);
+  --shadow-dialog: 0 16px 40px rgba(20, 22, 26, 0.18);
 }
 
 /* Sombras FORA do @theme de propósito: no Tailwind 4 a utility gerada a partir do @theme copia o
@@ -122,7 +143,7 @@
    a quem usa a classe. Variável de runtime + utility própria que a lê. */
 :root {
   color-scheme: dark;
-  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.55);
   --shadow-hairline-b: inset 0 -1px 0 var(--color-border-subtle);
 
@@ -146,6 +167,11 @@
 @utility z-toast { z-index: var(--z-toast); }
 @utility z-tooltip { z-index: var(--z-tooltip); }
 
+/* Barra de título própria (titleBarOverlay do Electron): a faixa arrasta a janela; o que é
+   clicável dentro dela leva no-drag. */
+@utility drag-region { -webkit-app-region: drag; app-region: drag; }
+@utility no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
+
 /* ── Receitas compartilhadas ──────────────────────────────────────────────── */
 @utility label-micro {
   font-family: var(--font-small);
@@ -158,10 +184,10 @@
 
 /* Campos: sans por padrão; o campo de DADO acrescenta font-mono no call site. */
 @utility input-field {
-  @apply w-full h-8 px-2 text-body text-text-primary bg-bg-input border border-border-default rounded outline-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
+  @apply w-full h-8 px-2.5 text-body text-text-primary bg-bg-input border border-border-strong rounded-control outline-none placeholder:text-text-tertiary focus:border-text-secondary disabled:opacity-50;
 }
 @utility input-inline {
-  @apply w-full h-7 px-1.5 text-minor text-text-primary bg-bg-input border border-border-default rounded outline-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
+  @apply w-full h-7 px-2 text-minor text-text-primary bg-bg-input border border-border-strong rounded-control outline-none placeholder:text-text-tertiary focus:border-text-secondary disabled:opacity-50;
 }
 
 @utility menu-surface {
@@ -173,13 +199,16 @@
 @utility menu-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   min-height: 32px;
-  padding: 4px 12px;
-  font-size: var(--text-minor);
+  padding: 4px 10px;
+  border-radius: var(--radius-control);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
   text-align: left;
-  &:hover:not(:disabled) { background: var(--color-bg-elevated); }
+  color: var(--color-text-primary);
+  &:hover:not(:disabled), &:focus-visible { background: var(--color-bg-elevated); }
   &:disabled { color: var(--color-text-disabled); cursor: default; }
 }
 
@@ -189,12 +218,17 @@ html, body, #root {
   margin: 0;
   font-family: var(--font-sans);
   font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
   background: var(--color-bg-base);
   color: var(--color-text-primary);
 }
 
 ::selection { background: color-mix(in srgb, var(--color-accent-solid) 35%, transparent); }
 * { scrollbar-color: color-mix(in srgb, var(--color-text-primary) 22%, transparent) transparent; }
+
+
+/* O campo de busca tem o próprio botão de fechar; o "x" nativo do Chromium duplicaria. */
+input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 
 /* Foco: SEM camada de propósito (vence as utilities em @layer — inclusive um outline-none
    esquecido). Por isso um ajuste de foco num componente também tem de ser regra sem camada,
@@ -203,21 +237,30 @@ html, body, #root {
 :focus-visible {
   outline: 2px solid var(--color-accent-solid);
   outline-offset: 1px;
-  box-shadow: 0 0 0 1px var(--color-text-primary); /* halo ≥3:1 em qualquer superfície */
+  box-shadow: 0 0 0 1px var(--color-bg-base); /* separa o anel do que está em volta */
 }
-/* Contêiner rolável que é parada de Tab dentro de um pai overflow-hidden: anel para DENTRO.
-   Marcar o elemento com data-focus-inset. */
-/* Decisão do dono (diretriz §9): os campos de link e de pasta não ganham destaque azul ao focar;
+/* Decisão do dono (diretriz §9): o campo do link e os de pasta não ganham destaque azul ao focar;
    só a borda clareia. Regra sem camada para vencer o anel global e o focus:border das utilities. */
 [data-focus-quiet]:focus,
 [data-focus-quiet]:focus-visible {
   outline: none;
   box-shadow: none;
-  border-color: var(--color-border-strong);
+  border-color: var(--color-text-tertiary);
 }
+/* A barra do link é um contêiner com o campo dentro: ela clareia quando o campo tem foco. */
+[data-focus-within-quiet]:focus-within { border-color: var(--color-text-tertiary); }
+/* Contêiner rolável que é parada de Tab dentro de um pai overflow-hidden: anel para DENTRO.
+   Marcar o elemento com data-focus-inset. */
 [data-focus-inset]:focus-visible {
   outline-offset: -2px;
-  box-shadow: inset 0 0 0 3px var(--color-text-primary);
+  box-shadow: inset 0 0 0 3px var(--color-bg-base);
+}
+/* Contêiner que recebe o foco só para ancorar o Tab (o painel de Ajustes ao abrir): sem anel —
+   não é um controle, e o anel em volta do painel inteiro só faria ruído. */
+[data-focus-anchor]:focus,
+[data-focus-anchor]:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 /* Transição de cor ao trocar de tema, só com o portão ligado; em @layer base para que qualquer
@@ -228,11 +271,6 @@ html, body, #root {
   }
 }
 
-/* Campo de várias linhas (lista de links): mesma casca do input-field. */
-@utility input-area {
-  @apply w-full px-2 py-1.5 text-body text-text-primary bg-bg-input border border-border-default rounded outline-none resize-none placeholder:text-text-tertiary focus:border-accent-solid disabled:opacity-50;
-}
-
 @utility tooltip-surface {
   padding: 4px 8px;
   font-size: var(--text-minor);
@@ -240,7 +278,7 @@ html, body, #root {
   color: var(--color-text-primary);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-overlay);
+  border-radius: var(--radius-control);
   box-shadow: var(--shadow-overlay);
   pointer-events: none;
   white-space: nowrap;

@@ -54,4 +54,11 @@ contextBridge.exposeInMainWorld('yta', {
   onProgressUpdate: (cb) => subscribe('progress-update', cb),
   itemAction: (action) => ipcRenderer.invoke('item-action', action), // da janela de andamento para a fila
   onItemAction: (cb) => subscribe('item-action', cb),
+  // 2.0: prévias, Ajustes num lugar só, copiar.
+  playlistPreview: (url) => ipcRenderer.invoke('playlist-preview', url),
+  filePreview: (url) => ipcRenderer.invoke('file-preview', url),
+  appPrefs: () => ipcRenderer.invoke('app-prefs'),
+  setAppPrefs: (patch) => ipcRenderer.invoke('app-prefs-set', patch),
+  onPrefsChanged: (cb) => subscribe('prefs-changed', cb),
+  clipboardWrite: (text) => ipcRenderer.invoke('clipboard-write', text),
 });
